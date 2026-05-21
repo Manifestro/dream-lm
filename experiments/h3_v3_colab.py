@@ -50,6 +50,7 @@ from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.model import DREAMLM
 from dream_lm.core.tokenizer import CharTokenizer
 from dream_lm.core.predictive_coding import (
+    compute_perception_error,
     compute_real_prediction_error,
     perception_error_norm,
 )
@@ -389,6 +390,10 @@ def _generate(model, prompt_tokens, gen_len, device, use_stdp):
                 h_next, caches, ema, **stdp_kwargs
             )
 
+        # NOTE: Test B uses self-prediction error (not real error) because
+        # in free generation there is no ground-truth next token.
+        # This measures a different signal than Test A (which uses real error).
+        # Test B results are not directly comparable to Test A.
         eps = compute_perception_error(output.logits, output.h_final, model.w_vocab.weight)
         eps_norms.append(perception_error_norm(eps)[0, 0].item())
 
@@ -519,6 +524,10 @@ Paired t-test (pass1 vs pass3, STDP): t={t_stat:.3f}, p={p_val:.3f}
 Chunks with positive net gain: {sum(1 for g in net_gains if g > 0)}/{len(results_a)}
 
 **Test B -- long generation ({TEST_B_GEN_LEN} tokens):**
+
+Note: Test B measures self-prediction error (eps = h - W^T @ softmax(W @ h)), not real
+error, because free generation has no ground-truth next token. This is a different
+signal than Test A and results are not directly comparable.
 
 | Metric | Value |
 |---|---|
