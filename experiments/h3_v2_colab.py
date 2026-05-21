@@ -86,7 +86,7 @@ TEST_A_N_PASSES = 3
 
 TEST_B_N_PROMPTS = 10
 TEST_B_PROMPT_LEN = 100  # chars
-TEST_B_GEN_LEN = 512     # generated tokens
+TEST_B_GEN_LEN = 400     # generated tokens (prompt ~100 + 400 = 500 < max_seq_len 512)
 
 DATA_FILE = Path("data/tiny-shakespeare.txt")
 VOCAB_FILE = Path("data/vocab.json")
@@ -295,6 +295,8 @@ def test_a(model, text, tokenizer, device):
 def _generate(model, prompt_tokens, gen_len, device, use_stdp):
     """Free autoregressive generation. Returns per-token ε norms (generated part)."""
     context = prompt_tokens[-model.pe.max_seq_len:]
+    # Guard: never generate past the PE table
+    gen_len = min(gen_len, model.pe.max_seq_len - len(context) - 1)
     x = torch.tensor([context], dtype=torch.long, device=device)
     h = model.embedding(x)
     h = model.pe(h)
