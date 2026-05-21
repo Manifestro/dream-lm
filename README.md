@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-8%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-156%20passed-2ea44f?style=flat-square)](#stage-8--done)
+[![Stage](https://img.shields.io/badge/stage-9%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-176%20passed-2ea44f?style=flat-square)](#stage-9--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -83,7 +83,7 @@ Full specification → [manifestro.io](https://manifestro.io)
 |-------|--------|-------|--------|
 | I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-4 done** |
 | II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | **5-8 done** |
-| III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | open |
+| III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | **9 done** · 10-12 open |
 | IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | open |
 | V — Memory | 16 – 17 | Sleep / consolidation, multi-layer stack | open |
 | VI — Scale | 18 – 20 | Language benchmarks, product hypothesis, preprint | open |
@@ -281,12 +281,37 @@ Scalar path preserved for backward compatibility — both paths run independentl
 
 ---
 
+## Stage 9 — Done
+
+STDP update — fast weights adapt during inference using surprise-gated Hebbian plasticity:
+
+- `FastWeightState._compute_stdp_delta()` — pure function, projects ε to r-space via V_basis, outer product with h
+- `FastWeightState.stdp_update()` — in-place U_K/U_V update with λ-decay and max-norm clipping, `torch.no_grad()` wrapped
+- `forward_with_cache` — optional STDP params, captures per-layer hidden states, updates fast weights after forward
+- `generate()` — STDP params passed through both prompt processing and per-token generation
+
+**20 / 20 new tests passed** · total: 176 / 176 (all stages)
+
+STDP behavior (η=0.1, λ=0.95, max_norm=1.0):
+
+| Metric | Value |
+|--------|-------|
+| ‖U_K‖ after 32 tokens | 1.81 |
+| ‖U_V‖ after 32 tokens | 1.81 |
+| Update direction (cos_sim) | 1.0 (perfect) |
+| Lambda convergence limit | 2.0 (steady state) |
+| Surprise modulation ratio | 3.74× (high vs low) |
+
+**H3 Status:** Supported (preliminary). STDP produces correct Hebbian update direction without gradient descent. Full test of whether ε_t actually decreases requires trained model — Stage 12.
+
+---
+
 ## Quick Start
 
 ```bash
 uv sync
-uv run pytest                                          # all 156 tests
-uv run pytest tests/test_stage08.py -v                 # Stage 8 only
+uv run pytest                                          # all 176 tests
+uv run pytest tests/test_stage09.py -v                 # Stage 9 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
 PYTHONPATH=. uv run python experiments/stage04_verify.py # fast weights verification
@@ -294,6 +319,7 @@ PYTHONPATH=. uv run python experiments/stage05_verify.py # perception error base
 PYTHONPATH=. uv run python experiments/stage06_verify.py # EMA normalization verification
 PYTHONPATH=. uv run python experiments/stage07_verify.py # surprise gate verification
 PYTHONPATH=. uv run python experiments/stage08_verify.py # vectorized gate verification
+PYTHONPATH=. uv run python experiments/stage09_verify.py # STDP update verification
 ```
 
 ---
@@ -301,23 +327,23 @@ PYTHONPATH=. uv run python experiments/stage08_verify.py # vectorized gate verif
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1-8: transformer blocks + model
+dream_lm/core/           # Stage 1-9: transformer blocks + model
   attention.py           # CausalAttention
   multihead.py           # MultiHeadAttention (KV-cache incremental forward, fast-weight augment)
   positional_encoding.py # SinusoidalPositionalEncoding (+ offset)
   transformer_layer.py   # TransformerLayer, FeedForward
   kv_cache.py            # KVCache dataclass (+ fast_weights field, Stage 4)
-  fast_weights.py        # FastWeightState dataclass (Stage 4)
+  fast_weights.py        # FastWeightState dataclass (+ stdp_update, Stage 9)
   predictive_coding.py   # compute_perception_error, perception_error_norm, perception_error_groups (Stage 5, 8)
   ema.py                 # EMAStats dataclass (scalar + grouped mode, Stage 6, 8)
   surprise_gate.py       # SurpriseGate + VectorizedGate classes (Stage 7, 8)
   tokenizer.py           # CharTokenizer (encode/decode, save/load)
-  model.py               # DREAMLM (+ ModelOutput, fast_weight_r, ema_alpha, gate, G)
+  model.py               # DREAMLM (+ ModelOutput, fast_weight_r, ema_alpha, gate, G, STDP)
 dream_lm/train/          # Training infrastructure
   loop.py                # CharDataset, CosineWarmupScheduler, train() (+ ModelOutput support)
 dream_lm/eval/           # Metrics
   metrics.py             # perplexity, bits_per_char
-tests/                   # 156 tests (9 attention + 15 transformer + 26 S2 + 17 S3 + 21 S4 + 16 S5 + 17 S6 + 13 S7 + 22 S8)
+tests/                   # 176 tests (9 attention + 15 transformer + 26 S2 + 17 S3 + 21 S4 + 16 S5 + 17 S6 + 13 S7 + 22 S8 + 20 S9)
 experiments/             # launch scripts
   stage01_verify.py      # Stage 1: gradcheck + benchmarks
   stage02_train.py       # Train on tiny-shakespeare
@@ -327,8 +353,9 @@ experiments/             # launch scripts
   stage06_verify.py      # EMA normalization verification
   stage07_verify.py      # Surprise gate verification (Stage 7)
   stage08_verify.py      # Vectorized gate verification (Stage 8)
+  stage09_verify.py      # STDP update verification (Stage 9)
 configs/                 # YAML hyperparameter configs
-  stage02.yaml           # Stage 2 config (+ fast_weight_r, ema, gate, G)
+  stage02.yaml           # Stage 2 config (+ fast_weight_r, ema, gate, G, stdp)
 ```
 
 ---

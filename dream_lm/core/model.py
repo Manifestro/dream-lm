@@ -73,6 +73,9 @@ class DREAMLM(nn.Module):
         gate_theta_0: float = 0.0,
         gate_beta: float = 5.0,
         G: int = 0,
+        stdp_eta: float = 0.01,
+        stdp_lambda_decay: float = 0.95,
+        stdp_max_norm: float = 1.0,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -80,6 +83,9 @@ class DREAMLM(nn.Module):
         self.fast_weight_r = fast_weight_r
         self.ema_alpha = ema_alpha
         self.G = G
+        self.stdp_eta = stdp_eta
+        self.stdp_lambda_decay = stdp_lambda_decay
+        self.stdp_max_norm = stdp_max_norm
         self.gate = SurpriseGate(theta_0=gate_theta_0, beta=gate_beta)
 
         if G > 0:
@@ -157,12 +163,16 @@ class DREAMLM(nn.Module):
         kv_caches: list[KVCache | None],
         ema_stats: EMAStats | None = None,
         ema_stats_grouped: EMAStats | None = None,
+        stdp_eta: float | None = None,
+        stdp_lambda_decay: float | None = None,
+        stdp_max_norm: float | None = None,
     ) -> tuple[ModelOutput, list[KVCache | None], EMAStats | None, Tensor | None, Tensor | None]:
         """Forward pass with KV-Cache for incremental inference.
 
         Processes a single token (or short sequence) through the model,
         updating the provided KV-Caches for each layer.
-        Optionally updates EMA statistics and computes surprise gate.
+        Optionally updates EMA statistics, computes surprise gate,
+        and applies STDP update to fast weights.
 
         When G > 0, computes both scalar and grouped surprise signals.
 
@@ -171,6 +181,9 @@ class DREAMLM(nn.Module):
             kv_caches: list of KVCache (one per layer), or None for each layer
             ema_stats: optional scalar EMAStats for perception error normalization
             ema_stats_grouped: optional grouped EMAStats (G groups) for per-channel EMA
+            stdp_eta: STDP learning rate (None = skip STDP)
+            stdp_lambda_decay: STDP decay factor (None = skip STDP)
+            stdp_max_norm: STDP max norm clipping (None = skip STDP)
 
         Returns:
             ModelOutput with logits and h_final
@@ -180,9 +193,13 @@ class DREAMLM(nn.Module):
             surprise_grouped: (batch, seq_len, G) grouped surprise values, or None
         """
         caches_out: list[KVCache | None] = []
+        layer_hiddens: list[Tensor] = []  # h before each layer (for STDP)
 
         h = x
         for i, layer in enumerate(self.layers):
+            # Capture h before layer for STDP (post-residual from previous layer)
+            layer_hiddens.append(h)
+
             cache_in = kv_caches[i] if i < len(kv_caches) else None
             if cache_in is not None:
                 h, _, cache_out = layer(h, cache_in)
@@ -214,6 +231,20 @@ class DREAMLM(nn.Module):
                 eps_groups_normalized = ema_stats_grouped.update(eps_groups)
                 surprise_grouped = self.vec_gate.forward(eps_groups_normalized)
 
+        # STDP update (Stage 9) — only when all three params provided
+        if stdp_eta is not None and stdp_lambda_decay is not None and stdp_max_norm is not None:
+            for i, cache in enumerate(caches_out):
+                if cache is not None and cache.fast_weights is not None:
+                    cache.fast_weights.stdp_update(
+                        eps=eps_perc,                     # (batch, seq, d_model)
+                        h=layer_hiddens[i],               # (batch, seq, d_model) — h before layer
+                        e=x,                              # (batch, seq, d_model) — input embedding
+                        surprise=surprise_scalar,         # (batch, seq)
+                        eta=stdp_eta,
+                        lambda_decay=stdp_lambda_decay,
+                        max_norm=stdp_max_norm,
+                    )
+
         return output, caches_out, updated_ema, surprise_scalar, surprise_grouped
 
     @torch.no_grad()
@@ -223,6 +254,9 @@ class DREAMLM(nn.Module):
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: int | None = None,
+        stdp_eta: float | None = None,
+        stdp_lambda_decay: float | None = None,
+        stdp_max_norm: float | None = None,
     ) -> list[int]:
         """Autoregressive text generation with KV-Cache.
 
@@ -280,7 +314,12 @@ class DREAMLM(nn.Module):
         ema_stats = EMAStats.init(
             batch=1, alpha=self.ema_alpha, device=device, dtype=h.dtype
         )
-        output, kv_caches, ema_stats, _, _ = self.forward_with_cache(h, kv_caches, ema_stats)
+        output, kv_caches, ema_stats, _, _ = self.forward_with_cache(
+            h, kv_caches, ema_stats,
+            stdp_eta=stdp_eta,
+            stdp_lambda_decay=stdp_lambda_decay,
+            stdp_max_norm=stdp_max_norm,
+        )
         logits = output.logits[0, -1, :]  # (vocab_size,)
 
         # Track actual token position — needed when FIFO truncation is active
@@ -313,7 +352,12 @@ class DREAMLM(nn.Module):
                 h_next = self.pe(h_next, offset=pos)
                 pos += 1
 
-                logits, kv_caches, ema_stats, _, _ = self.forward_with_cache(h_next, kv_caches, ema_stats)
+                logits, kv_caches, ema_stats, _, _ = self.forward_with_cache(
+                    h_next, kv_caches, ema_stats,
+                    stdp_eta=stdp_eta,
+                    stdp_lambda_decay=stdp_lambda_decay,
+                    stdp_max_norm=stdp_max_norm,
+                )
                 logits = logits.logits[0, 0, :]  # (vocab_size,)
 
         return tokens

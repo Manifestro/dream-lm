@@ -41,3 +41,8 @@ gate:
   theta_0: 0.0       # base threshold (centered on EMA mean)
   beta: 5.0          # gate temperature (higher = sharper transition)
   G: 0               # channel groups (0 = scalar gate, 8 = vectorized Stage 8)
+
+stdp:
+  eta: 0.01          # STDP learning rate
+  lambda_decay: 0.95 # exponential decay per step (1.0 = no decay)
+  max_norm: 1.0      # max Frobenius norm per head
