@@ -13,6 +13,7 @@ into embedding space via einsum("vd,bsv->bsd", W, y_hat).
 """
 
 import torch
+import torch.nn as nn
 from torch import Tensor
 
 
@@ -52,6 +53,38 @@ def compute_perception_error(
 
     eps_perc = h_final - w_vocab_T_y  # (batch, seq_len, d_model)
     return eps_perc
+
+
+def compute_real_prediction_error(
+    logits: Tensor,
+    x_real: Tensor,
+    embedding: nn.Embedding,
+    w_vocab_weight: Tensor,
+) -> Tensor:
+    """Compute real prediction error: difference between actual next token and model's expectation.
+
+    eps_real = embed(x_real) - W_vocab^T @ softmax(logits)
+
+    Unlike compute_perception_error (which compares h_final to its own projection),
+    this uses the ground-truth next token. The signal is non-zero whenever the model
+    predicted the wrong distribution — it directly measures what the model got wrong.
+
+    Only valid when ground-truth tokens are available (teacher forcing, training).
+    In free generation x_real is model-generated, so the signal degenerates.
+
+    Args:
+        logits: (batch, seq_len, vocab_size) — predictions at positions t
+        x_real: (batch, seq_len) — actual token IDs at positions t+1 (targets)
+        embedding: nn.Embedding — shared embedding matrix E
+        w_vocab_weight: (vocab_size, d_model) — W_vocab weight matrix
+
+    Returns:
+        eps_real: (batch, seq_len, d_model)
+    """
+    e_real = embedding(x_real)                                    # (batch, seq_len, d_model)
+    y_hat = torch.softmax(logits, dim=-1)                         # (batch, seq_len, vocab_size)
+    w_T_y = torch.einsum("vd,bsv->bsd", w_vocab_weight, y_hat)   # (batch, seq_len, d_model)
+    return e_real - w_T_y
 
 
 def perception_error_norm(eps_perc: Tensor) -> Tensor:

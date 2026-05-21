@@ -49,7 +49,10 @@ from dream_lm.core.fast_weights import FastWeightState
 from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.model import DREAMLM
 from dream_lm.core.tokenizer import CharTokenizer
-from dream_lm.core.predictive_coding import compute_perception_error, perception_error_norm
+from dream_lm.core.predictive_coding import (
+    compute_real_prediction_error,
+    perception_error_norm,
+)
 from dream_lm.train.loop import CharDataset, train
 
 RESULTS_DIR = Path(__file__).parent / "h3_v3_results"
@@ -222,7 +225,9 @@ def _make_caches(model, device, dtype, max_len, carry_u_from=None):
 def _tf_pass(model, token_ids, device, use_stdp, caches):
     """
     One teacher-forcing pass.
-    At each step t, feeds the real token (not a generated one).
+    At each step t, feeds real token t and measures real prediction error vs token t+1.
+    STDP also uses real error (x_real_next=token_{t+1}) -- not self-prediction.
+    Last token has no ground-truth successor so it's excluded from eps_norms.
     Returns (per-token eps norms, updated caches, total ||U_K||).
     """
     ema = EMAStats.init(batch=1, alpha=model.ema_alpha, device=device, dtype=torch.float32)
@@ -241,14 +246,22 @@ def _tf_pass(model, token_ids, device, use_stdp, caches):
             h = model.embedding(x)
             h = model.pe(h, offset=pos)
 
-            output, caches, ema, _, _ = model.forward_with_cache(
-                h, caches, ema, **stdp_kwargs
+            # Real next token available for all positions except the last
+            has_next = pos + 1 < len(token_ids)
+            x_real_next = (
+                torch.tensor([[token_ids[pos + 1]]], dtype=torch.long, device=device)
+                if has_next else None
             )
 
-            eps = compute_perception_error(
-                output.logits, output.h_final, model.w_vocab.weight
+            output, caches, ema, _, _ = model.forward_with_cache(
+                h, caches, ema, x_real_next=x_real_next, **stdp_kwargs
             )
-            eps_norms.append(perception_error_norm(eps)[0, 0].item())
+
+            if has_next:
+                eps = compute_real_prediction_error(
+                    output.logits, x_real_next, model.embedding, model.w_vocab.weight
+                )
+                eps_norms.append(perception_error_norm(eps)[0, 0].item())
 
     u_k_norm = (
         sum(c.fast_weights.u_k.norm().item() for c in caches if c.fast_weights is not None)

@@ -172,6 +172,7 @@ def train_epoch(
                     stdp_eta=stdp_eta,
                     stdp_lambda_decay=stdp_lambda_decay,
                     stdp_max_norm=stdp_max_norm,
+                    x_real_next=y,  # real next tokens — eliminates self-prediction circularity
                 )
                 # fast_weight_states[i].u_k/u_v mutated in-place through kv_caches refs
 

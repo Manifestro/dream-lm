@@ -26,6 +26,7 @@ from dream_lm.core.ema import EMAStats
 from dream_lm.core.surprise_gate import SurpriseGate, VectorizedGate
 from dream_lm.core.predictive_coding import (
     compute_perception_error,
+    compute_real_prediction_error,
     perception_error_norm,
     perception_error_groups,
 )
@@ -166,6 +167,7 @@ class DREAMLM(nn.Module):
         stdp_eta: float | None = None,
         stdp_lambda_decay: float | None = None,
         stdp_max_norm: float | None = None,
+        x_real_next: Tensor | None = None,
     ) -> tuple[ModelOutput, list[KVCache | None], EMAStats | None, Tensor | None, Tensor | None]:
         """Forward pass with KV-Cache for incremental inference.
 
@@ -184,6 +186,10 @@ class DREAMLM(nn.Module):
             stdp_eta: STDP learning rate (None = skip STDP)
             stdp_lambda_decay: STDP decay factor (None = skip STDP)
             stdp_max_norm: STDP max norm clipping (None = skip STDP)
+            x_real_next: (batch, seq_len) token IDs — actual next tokens for real
+                prediction error. When provided, STDP uses real error instead of
+                self-prediction error. Only meaningful in teacher-forcing contexts
+                (training, repeated-pass experiments). None = use self-prediction.
 
         Returns:
             ModelOutput with logits and h_final
@@ -218,7 +224,12 @@ class DREAMLM(nn.Module):
         surprise_scalar: Tensor | None = None
         surprise_grouped: Tensor | None = None
         if ema_stats is not None:
-            eps_perc = compute_perception_error(logits, h, self.w_vocab.weight)
+            if x_real_next is not None:
+                eps_perc = compute_real_prediction_error(
+                    logits, x_real_next, self.embedding, self.w_vocab.weight
+                )
+            else:
+                eps_perc = compute_perception_error(logits, h, self.w_vocab.weight)
 
             # Scalar path (Stage 5/6 baseline)
             eps_norm = perception_error_norm(eps_perc)  # (batch, seq_len)
