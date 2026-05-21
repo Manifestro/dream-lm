@@ -10,6 +10,7 @@ model:
   max_seq_len: 256
   activation: "gelu"
   tie_embeddings: true
+  fast_weight_r: 0  # 0 = disabled (Stage 4 structure only, set >0 to enable)
 
 training:
   lr: 3.0e-4

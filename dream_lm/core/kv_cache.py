@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 import torch
 from torch import Tensor
 
+from dream_lm.core.fast_weights import FastWeightState
+
 
 @dataclass
 class KVCache:
@@ -24,16 +26,19 @@ class KVCache:
 
     K and V tensors are accumulated as generation proceeds.
     Optional max_cache_len enables FIFO truncation for long sequences.
+    Fast weights augment K/V before append (Stage 4+).
 
     Attributes:
         k: (batch, n_heads, seq_len, d_head) — accumulated keys
         v: (batch, n_heads, seq_len, d_head) — accumulated values
         max_cache_len: if set, cache is truncated to this length (FIFO)
+        fast_weights: optional FastWeightState for low-rank K/V augmentation
     """
 
     k: Tensor | None = None
     v: Tensor | None = None
     max_cache_len: int | None = field(default=None, repr=False)
+    fast_weights: FastWeightState | None = field(default=None, repr=False)
 
     @property
     def seq_len(self) -> int:
@@ -54,6 +59,7 @@ class KVCache:
             k_new: (batch, n_heads, seq_len, d_head) — K for the new token(s)
             v_new: (batch, n_heads, seq_len, d_head) — V for the new token(s)
         """
+        assert self.k is not None, "KVCache not initialized — call KVCache.init() before append()"
         self.k = torch.cat([self.k, k_new], dim=2)
         self.v = torch.cat([self.v, v_new], dim=2)
 
@@ -70,6 +76,7 @@ class KVCache:
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
         max_cache_len: int | None = None,
+        fast_weights: FastWeightState | None = None,
     ) -> KVCache:
         """Create an empty KVCache ready for incremental inference.
 
@@ -83,7 +90,8 @@ class KVCache:
             device: device to allocate on
             dtype: dtype for cache tensors
             max_cache_len: optional FIFO truncation limit
+            fast_weights: optional FastWeightState for low-rank K/V augmentation
         """
         k = torch.empty(batch, n_heads, 0, d_head, device=device, dtype=dtype)
         v = torch.empty(batch, n_heads, 0, d_head, device=device, dtype=dtype)
-        return KVCache(k=k, v=v, max_cache_len=max_cache_len)
+        return KVCache(k=k, v=v, max_cache_len=max_cache_len, fast_weights=fast_weights)

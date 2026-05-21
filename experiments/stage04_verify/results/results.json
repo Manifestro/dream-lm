@@ -1,0 +1,28 @@
+{
+  "baseline_identity": true,
+  "augment_effect": {
+    "k_changed": true,
+    "v_changed": true,
+    "k_relative_change": 0.40029269456863403,
+    "v_relative_change": 0.36682721972465515
+  },
+  "v_basis_orthonormal": true,
+  "performance": {
+    "r=0": {
+      "total_ms": 5.409087700354576,
+      "ms_per_token": 0.5409087700354576
+    },
+    "r=8": {
+      "total_ms": 6.139185349638865,
+      "ms_per_token": 0.6139185349638865
+    },
+    "r=16": {
+      "total_ms": 5.587487450429762,
+      "ms_per_token": 0.5587487450429762
+    },
+    "r=32": {
+      "total_ms": 6.055908400048793,
+      "ms_per_token": 0.6055908400048793
+    }
+  }
+}

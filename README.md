@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-3%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-67%20passed-2ea44f?style=flat-square)](#stage-3--done)
+[![Stage](https://img.shields.io/badge/stage-4%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-88%20passed-2ea44f?style=flat-square)](#stage-4--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -81,7 +81,7 @@ Full specification → [manifestro.io](https://manifestro.io)
 
 | Phase | Stages | Theme | Status |
 |-------|--------|-------|--------|
-| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-3 done** · 4 open |
+| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-4 done** |
 | II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | open |
 | III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | open |
 | IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | open |
@@ -168,14 +168,32 @@ Cached time is nearly constant across context lengths — O(1) per token. Uncach
 
 ---
 
+## Stage 4 — Done
+
+Low-rank fast-weight structure for K/V augmentation — foundation for STDP plasticity:
+
+- `FastWeightState` — per-head U_K, U_V (zero init) + orthonormal V_basis (QR decomposed)
+- `KVCache` — added `fast_weights` field (nested state, not separate argument)
+- `MultiHeadAttention` — augment K/V before cache append: `K = W_K(h) + U_K @ V_basis.T`
+- `DREAMLM` — `fast_weight_r` parameter, auto-init FastWeightState per layer when `r > 0`
+
+**21 / 21 new tests passed** · total: 88 / 88 (all stages)
+
+Baseline identity verified: `fast_weight_r=0` produces bit-identical output to model without fast weights. V_basis orthonormality confirmed per head (V^T V = I). Gradients flow through augment path to U_K/U_V. Each layer holds an independent `FastWeightState` — no shared state across layers.
+
+Fast weights are zero-initialized — augmentation is a no-op until U is updated (Stage 9 STDP). Cache stores augmented K/V, so past tokens reflect what the model knew at that time.
+
+---
+
 ## Quick Start
 
 ```bash
 uv sync
-uv run pytest                                          # all 67 tests
-uv run pytest tests/test_stage03.py -v                 # Stage 3 only
+uv run pytest                                          # all 88 tests
+uv run pytest tests/test_stage04.py -v                 # Stage 4 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
+PYTHONPATH=. uv run python experiments/stage04_verify.py # fast weights verification
 ```
 
 ---
@@ -183,25 +201,27 @@ PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1-3: transformer blocks + model
+dream_lm/core/           # Stage 1-4: transformer blocks + model
   attention.py           # CausalAttention
-  multihead.py           # MultiHeadAttention (KV-cache incremental forward)
+  multihead.py           # MultiHeadAttention (KV-cache incremental forward, fast-weight augment)
   positional_encoding.py # SinusoidalPositionalEncoding (+ offset)
   transformer_layer.py   # TransformerLayer, FeedForward
-  kv_cache.py            # KVCache dataclass (NEW Stage 3)
+  kv_cache.py            # KVCache dataclass (+ fast_weights field, Stage 4)
+  fast_weights.py        # FastWeightState dataclass (NEW Stage 4)
   tokenizer.py           # CharTokenizer (encode/decode, save/load)
-  model.py               # DREAMLM (full autoregressive LM + KV-cache)
+  model.py               # DREAMLM (full autoregressive LM + KV-cache + fast_weight_r)
 dream_lm/train/          # Training infrastructure
   loop.py                # CharDataset, CosineWarmupScheduler, train()
 dream_lm/eval/           # Metrics
   metrics.py             # perplexity, bits_per_char
-tests/                   # 66 tests (24 Stage 1 + 26 Stage 2 + 16 Stage 3)
+tests/                   # 88 tests (24 Stage 1 + 26 Stage 2 + 17 Stage 3 + 21 Stage 4)
 experiments/             # launch scripts
   stage01_verify.py      # Stage 1: gradcheck + benchmarks
   stage02_train.py       # Train on tiny-shakespeare
-  stage03_verify.py      # KV-cache correctness + benchmark (NEW Stage 3)
+  stage03_verify.py      # KV-cache correctness + benchmark
+  stage04_verify.py      # Fast weights correctness + baseline identity (NEW Stage 4)
 configs/                 # YAML hyperparameter configs
-  stage02.yaml           # Stage 2 config
+  stage02.yaml           # Stage 2 config (+ fast_weight_r)
 ```
 
 ---

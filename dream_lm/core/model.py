@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from dream_lm.core.fast_weights import FastWeightState
 from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.positional_encoding import SinusoidalPositionalEncoding
 from dream_lm.core.transformer_layer import TransformerLayer
@@ -29,6 +30,7 @@ class DREAMLM(nn.Module):
         input IDs → Embedding → PE → TransformerLayer × N → LayerNorm → W_vocab
 
     Pre-norm transformer stack (stable for deep configurations).
+    Low-rank fast weights (U_K, U_V) augment K/V projections in attention.
     """
 
     def __init__(
@@ -41,10 +43,12 @@ class DREAMLM(nn.Module):
         max_seq_len: int = 256,
         activation: str = "gelu",
         tie_embeddings: bool = True,
+        fast_weight_r: int = 0,
     ) -> None:
         super().__init__()
         self.d_model = d_model
         self.vocab_size = vocab_size
+        self.fast_weight_r = fast_weight_r
 
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pe = SinusoidalPositionalEncoding(d_model, max_seq_len)
@@ -177,13 +181,23 @@ class DREAMLM(nn.Module):
 
         # Initialize caches (one per layer)
         device = self.embedding.weight.device
+        n_heads = self.layers[0].attn.n_heads
+        d_head = self.layers[0].attn.d_head
+
+        # Each layer gets its own FastWeightState — they must not share the same object
+        # because Stage 9 (STDP) updates U_K/U_V independently per layer.
         kv_caches: list[KVCache | None] = [
             KVCache.init(
                 batch=1,
-                n_heads=self.layers[0].attn.n_heads,
-                d_head=self.layers[0].attn.d_head,
+                n_heads=n_heads,
+                d_head=d_head,
                 device=device,
                 dtype=h.dtype,
+                fast_weights=(
+                    FastWeightState.init(n_heads, d_head, self.fast_weight_r, device, h.dtype)
+                    if self.fast_weight_r > 0
+                    else None
+                ),
             )
             for _ in range(len(self.layers))
         ]

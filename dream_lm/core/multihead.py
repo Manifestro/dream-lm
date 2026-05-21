@@ -71,6 +71,11 @@ class MultiHeadAttention(nn.Module):
         v = self.w_v(x).view(batch, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         # q, k, v: (batch, n_heads, seq_len, d_head)
 
+        # Fast-weight augmentation: K = W_K @ h + U_K @ V_basis.T
+        if kv_cache is not None and kv_cache.fast_weights is not None:
+            fw = kv_cache.fast_weights
+            k, v = fw.augment(k, v)
+
         # Incremental inference: append to cache
         if kv_cache is not None:
             kv_cache.append(k, v)
