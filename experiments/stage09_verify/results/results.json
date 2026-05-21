@@ -1,0 +1,66 @@
+{
+  "u_growth": {
+    "u_k_norm": 1.8099,
+    "u_v_norm": 1.8099,
+    "u_k_grows": true,
+    "u_v_grows": true
+  },
+  "update_direction": {
+    "cosine_similarity": 1.0,
+    "direction_matches": true
+  },
+  "lambda_decay": {
+    "norms_first_5": [
+      0.7966,
+      1.5534,
+      2.0,
+      2.0,
+      2.0
+    ],
+    "norms_last_5": [
+      2.0,
+      2.0,
+      2.0,
+      2.0,
+      2.0
+    ],
+    "convergence_std": 0.0,
+    "converges": true,
+    "final_norm": 2.0
+  },
+  "max_norm": {
+    "u_k_head_norms": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "u_v_head_norms": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "all_u_k_within_limit": true,
+    "all_u_v_within_limit": true
+  },
+  "surprise_modulation": {
+    "low_surprise_norm": 0.535,
+    "high_surprise_norm": 2.0,
+    "higher_surprise_larger_update": true,
+    "ratio": 3.74
+  },
+  "generation_with_stdp": {
+    "generated_tokens": 10,
+    "u_norms_per_step": [
+      2.7707,
+      3.7555,
+      4.0,
+      4.0,
+      4.0,
+      4.0
+    ],
+    "u_norms_increasing": true,
+    "final_u_norm": 4.0
+  }
+}

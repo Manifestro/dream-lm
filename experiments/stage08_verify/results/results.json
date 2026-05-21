@@ -1,0 +1,112 @@
+{
+  "vec_gate_range": {
+    "min_possible": 0.0,
+    "max_possible": 1.0,
+    "checked_cases": [
+      "large_random",
+      "very_positive",
+      "very_negative",
+      "zero"
+    ],
+    "all_in_range": true
+  },
+  "per_channel_beta": {
+    "beta_values": [
+      1.0,
+      5.0,
+      10.0,
+      20.0
+    ],
+    "gate_values_per_channel": [
+      0.6225,
+      0.9241,
+      0.9933,
+      1.0
+    ],
+    "monotonic_with_beta": true
+  },
+  "grouped_ema": {
+    "first_10_mean_abs": 4.9772,
+    "last_10_mean_abs": 0.4059,
+    "converging": true,
+    "final_mu": [
+      4.3301,
+      4.3301,
+      4.3301,
+      4.3301
+    ],
+    "final_var": [
+      2.8717,
+      2.8717,
+      2.8717,
+      2.8717
+    ]
+  },
+  "group_structure": {
+    "group_means_first_pos": [
+      10.0,
+      0.8101,
+      0.9484,
+      0.7559,
+      0.8295,
+      0.736,
+      0.6198,
+      0.1
+    ],
+    "first_group_high": true,
+    "last_group_low": true
+  },
+  "model_5_tuple": {
+    "output_shape": [
+      1,
+      32,
+      66
+    ],
+    "scalar_gate_shape": [
+      1,
+      32
+    ],
+    "grouped_gate_shape": [
+      1,
+      32,
+      8
+    ],
+    "scalar_range": [
+      0.9997,
+      1.0
+    ],
+    "grouped_range": [
+      0.9665,
+      1.0
+    ],
+    "num_groups": 8
+  },
+  "scalar_vs_grouped": {
+    "model": "d_model=128, n_layers=4",
+    "seq_len": 64,
+    "scalar_gate_mean": 0.9989,
+    "scalar_gate_std": 0.0014,
+    "grouped_gate_means_per_channel": [
+      0.9984,
+      0.999,
+      0.9878,
+      0.9998,
+      0.9984,
+      0.9986,
+      0.9993,
+      0.9992
+    ],
+    "grouped_gate_stds_per_channel": [
+      0.0028,
+      0.004,
+      0.0188,
+      0.0003,
+      0.0019,
+      0.0018,
+      0.001,
+      0.0009
+    ],
+    "group_variance": 0.0,
+    "scalar_mean_vs_grouped_mean_diff": 0.0014
+  }
+}
