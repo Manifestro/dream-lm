@@ -88,12 +88,13 @@ def verify_correctness(model: DREAMLM, n_tests: int = 10) -> bool:
 
         # Uncached
         tokens = list(prompt)
-        for _ in range(n_gen):
-            context = tokens[-model.pe.max_seq_len:]
-            x = torch.tensor([context], dtype=torch.long)
-            logits = model(x)
-            next_token = logits[0, -1, :].argmax().item()
-            tokens.append(next_token)
+        with torch.no_grad():
+            for _ in range(n_gen):
+                context = tokens[-model.pe.max_seq_len:]
+                x = torch.tensor([context], dtype=torch.long)
+                logits = model(x)
+                next_token = logits[0, -1, :].argmax().item()
+                tokens.append(next_token)
 
         if tokens_cached != tokens:
             print(f"  FAIL seed={i} prompt_len={prompt_len}")

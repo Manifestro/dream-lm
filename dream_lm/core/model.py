@@ -108,21 +108,21 @@ class DREAMLM(nn.Module):
 
     def forward_with_cache(
         self, x: Tensor, kv_caches: list[KVCache | None]
-    ) -> tuple[Tensor, list[KVCache]]:
+    ) -> tuple[Tensor, list[KVCache | None]]:
         """Forward pass with KV-Cache for incremental inference.
 
         Processes a single token (or short sequence) through the model,
         updating the provided KV-Caches for each layer.
 
         Args:
-            x: (batch, seq_len, d_model) — embedded input (already has PE)
+            x: (batch, seq_len, d_model) — embedded input (already has PE applied)
             kv_caches: list of KVCache (one per layer), or None for each layer
 
         Returns:
             logits: (batch, seq_len, vocab_size)
-            updated_caches: list of updated KVCache objects
+            updated_caches: list of updated KVCache objects (same objects, mutated in-place)
         """
-        caches_out: list[KVCache] = []
+        caches_out: list[KVCache | None] = []
 
         h = x
         for i, layer in enumerate(self.layers):
@@ -132,7 +132,7 @@ class DREAMLM(nn.Module):
                 caches_out.append(cache_out)
             else:
                 h, _ = layer(h)
-                caches_out.append(None)  # type: ignore[arg-type]
+                caches_out.append(None)
 
         h = self.ln_f(h)
         logits = self.w_vocab(h)
@@ -193,6 +193,11 @@ class DREAMLM(nn.Module):
         logits, kv_caches = self.forward_with_cache(h, kv_caches)
         logits = logits[0, -1, :]  # (vocab_size,)
 
+        # Track actual token position — needed when FIFO truncation is active
+        # (kv_cache.seq_len would be capped at max_cache_len, but PE offset must
+        # reflect the true position in the sequence, not the cache size)
+        pos = len(context)
+
         # --- Phase 2: Generate tokens one at a time ---
         for step in range(max_new_tokens):
             # Sample from current logits
@@ -215,7 +220,8 @@ class DREAMLM(nn.Module):
                 # Feed the newly generated token through the cache for next prediction
                 x_next = torch.tensor([[next_token]], dtype=torch.long, device=device)
                 h_next = self.embedding(x_next)  # (1, 1, d_model)
-                h_next = self.pe(h_next, offset=kv_caches[0].seq_len)
+                h_next = self.pe(h_next, offset=pos)
+                pos += 1
 
                 logits, kv_caches = self.forward_with_cache(h_next, kv_caches)
                 logits = logits[0, 0, :]  # (vocab_size,)

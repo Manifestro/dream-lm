@@ -7,7 +7,7 @@
 *A transformer that rewrites its own weights as it reads.*
 
 [![Stage](https://img.shields.io/badge/stage-3%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-66%20passed-2ea44f?style=flat-square)](#stage-3--done)
+[![Tests](https://img.shields.io/badge/tests-67%20passed-2ea44f?style=flat-square)](#stage-3--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -151,7 +151,7 @@ KV-Cache for efficient autoregressive generation — O(n) instead of O(n²):
 - `DREAMLM` — two-phase `generate()`: prompt processing → incremental token generation
 - `SinusoidalPositionalEncoding` — added `offset` parameter for incremental PE
 
-**16 / 16 new tests passed** · total: 66 / 66 (all stages)
+**17 / 17 new tests passed** · total: 67 / 67 (all stages)
 
 Cached generation output is numerically identical to full re-computation (verified across multiple seeds and context lengths).
 
@@ -172,7 +172,7 @@ Cached time is nearly constant across context lengths — O(1) per token. Uncach
 
 ```bash
 uv sync
-uv run pytest                                          # all 66 tests
+uv run pytest                                          # all 67 tests
 uv run pytest tests/test_stage03.py -v                 # Stage 3 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification

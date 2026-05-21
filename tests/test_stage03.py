@@ -47,7 +47,13 @@ class TestKVCacheInit:
     def test_empty_cache_has_zero_seq_len(self):
         cache = KVCache.init(batch=1, n_heads=4, d_head=16)
         assert cache.seq_len == 0
-        assert not cache.is_empty  # tensors exist, just zero-length
+        assert cache.is_empty  # zero tokens stored
+
+    def test_not_empty_after_append(self):
+        cache = KVCache.init(batch=1, n_heads=4, d_head=16)
+        assert cache.is_empty
+        cache.append(torch.randn(1, 4, 1, 16), torch.randn(1, 4, 1, 16))
+        assert not cache.is_empty
 
     def test_cache_shapes(self):
         cache = KVCache.init(batch=2, n_heads=8, d_head=32)

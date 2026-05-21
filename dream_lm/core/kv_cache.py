@@ -44,22 +44,18 @@ class KVCache:
 
     @property
     def is_empty(self) -> bool:
-        """True if cache has not been initialized yet."""
-        return self.k is None
+        """True if cache has no stored tokens (seq_len == 0)."""
+        return self.seq_len == 0
 
     def append(self, k_new: Tensor, v_new: Tensor) -> None:
         """Append new K/V tensors to the cache.
 
         Args:
-            k_new: (batch, n_heads, 1, d_head) — K for the new token
-            v_new: (batch, n_heads, 1, d_head) — V for the new token
+            k_new: (batch, n_heads, seq_len, d_head) — K for the new token(s)
+            v_new: (batch, n_heads, seq_len, d_head) — V for the new token(s)
         """
-        if self.k is None:
-            self.k = k_new
-            self.v = v_new
-        else:
-            self.k = torch.cat([self.k, k_new], dim=2)
-            self.v = torch.cat([self.v, v_new], dim=2)
+        self.k = torch.cat([self.k, k_new], dim=2)
+        self.v = torch.cat([self.v, v_new], dim=2)
 
         # FIFO truncation — prepares for LTC on Stage 11
         if self.max_cache_len is not None and self.seq_len > self.max_cache_len:
