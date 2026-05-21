@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-2%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-50%20passed-2ea44f?style=flat-square)](#stage-2--done)
+[![Stage](https://img.shields.io/badge/stage-3%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-66%20passed-2ea44f?style=flat-square)](#stage-3--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -81,7 +81,7 @@ Full specification → [manifestro.io](https://manifestro.io)
 
 | Phase | Stages | Theme | Status |
 |-------|--------|-------|--------|
-| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-2 done** · 3-4 open |
+| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-3 done** · 4 open |
 | II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | open |
 | III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | open |
 | IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | open |
@@ -141,13 +141,41 @@ Loss decreased monotonically from 3.53 → 2.38. Model learned character-level p
 
 ---
 
+## Stage 3 — Done
+
+KV-Cache for efficient autoregressive generation — O(n) instead of O(n²):
+
+- `KVCache` — dataclass with K/V tensors, append, FIFO truncation (designed for Stage 9 extension)
+- `MultiHeadAttention` — incremental forward with optional `kv_cache` parameter
+- `TransformerLayer` — cache passthrough
+- `DREAMLM` — two-phase `generate()`: prompt processing → incremental token generation
+- `SinusoidalPositionalEncoding` — added `offset` parameter for incremental PE
+
+**16 / 16 new tests passed** · total: 66 / 66 (all stages)
+
+Cached generation output is numerically identical to full re-computation (verified across multiple seeds and context lengths).
+
+Inference speedup (CPU · `torch.no_grad()` · 20-run avg):
+
+| Config | Cached (ms/token) | Uncached (ms/token) | Speedup |
+|--------|------------------:|--------------------:|--------:|
+| short (32+20) | 0.83 | 1.65 | 2.0x |
+| medium (64+32) | 0.80 | 2.12 | 2.6x |
+| long (128+32) | 0.86 | 3.32 | 3.9x |
+| very long (200+32) | 0.94 | 4.95 | 5.3x |
+
+Cached time is nearly constant across context lengths — O(1) per token. Uncached grows linearly — O(n) per token.
+
+---
+
 ## Quick Start
 
 ```bash
 uv sync
-uv run pytest                                          # all 50 tests
-uv run pytest tests/test_stage02.py -v                 # Stage 2 only
+uv run pytest                                          # all 66 tests
+uv run pytest tests/test_stage03.py -v                 # Stage 3 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
+PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
 ```
 
 ---
@@ -155,20 +183,23 @@ PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakesp
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1-2: transformer blocks + model
+dream_lm/core/           # Stage 1-3: transformer blocks + model
   attention.py           # CausalAttention
-  multihead.py           # MultiHeadAttention
-  positional_encoding.py # SinusoidalPositionalEncoding
+  multihead.py           # MultiHeadAttention (KV-cache incremental forward)
+  positional_encoding.py # SinusoidalPositionalEncoding (+ offset)
   transformer_layer.py   # TransformerLayer, FeedForward
+  kv_cache.py            # KVCache dataclass (NEW Stage 3)
   tokenizer.py           # CharTokenizer (encode/decode, save/load)
-  model.py               # DREAMLM (full autoregressive LM)
+  model.py               # DREAMLM (full autoregressive LM + KV-cache)
 dream_lm/train/          # Training infrastructure
   loop.py                # CharDataset, CosineWarmupScheduler, train()
 dream_lm/eval/           # Metrics
   metrics.py             # perplexity, bits_per_char
-tests/                   # 50 tests (24 Stage 1 + 26 Stage 2)
+tests/                   # 66 tests (24 Stage 1 + 26 Stage 2 + 16 Stage 3)
 experiments/             # launch scripts
+  stage01_verify.py      # Stage 1: gradcheck + benchmarks
   stage02_train.py       # Train on tiny-shakespeare
+  stage03_verify.py      # KV-cache correctness + benchmark (NEW Stage 3)
 configs/                 # YAML hyperparameter configs
   stage02.yaml           # Stage 2 config
 ```

@@ -42,16 +42,17 @@ class SinusoidalPositionalEncoding(nn.Module):
         # Register as buffer so it moves with the model and isn't a parameter
         self.register_buffer("pe", pe.unsqueeze(0))  # (1, max_seq_len, d_model)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, offset: int = 0) -> Tensor:
         """
         Args:
             x: (batch, seq_len, d_model)
+            offset: starting position index (for incremental inference)
 
         Returns:
             x + positional_encoding: (batch, seq_len, d_model)
         """
         _, seq_len, _ = x.shape
-        assert seq_len <= self.max_seq_len, (
-            f"Sequence length {seq_len} exceeds max_seq_len {self.max_seq_len}"
+        assert offset + seq_len <= self.max_seq_len, (
+            f"Position offset {offset} + seq_len {seq_len} exceeds max_seq_len {self.max_seq_len}"
         )
-        return x + self.pe[:, :seq_len, :]
+        return x + self.pe[:, offset : offset + seq_len, :]

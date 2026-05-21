@@ -14,6 +14,7 @@ Pre-norm architecture (LayerNorm before attention and FFN).
 import torch.nn as nn
 from torch import Tensor
 
+from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.multihead import MultiHeadAttention
 
 # Supported activations — extend here when adding SwiGLU in later stages
@@ -81,21 +82,32 @@ class TransformerLayer(nn.Module):
         self.ln_2 = nn.LayerNorm(d_model)
         self.ffn = FeedForward(d_model, ff_mult, activation)
 
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(
+        self, x: Tensor, kv_cache: KVCache | None = None
+    ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, KVCache]:
         """
         Args:
             x: (batch, seq_len, d_model)
+            kv_cache: optional KVCache for incremental inference
 
         Returns:
-            output: (batch, seq_len, d_model)
-            attn_weights: (batch, n_heads, seq_len, seq_len)
+            Without cache: (output, attn_weights)
+            With cache: (output, attn_weights, updated_kv_cache)
+                output: (batch, seq_len, d_model)
+                attn_weights: (batch, n_heads, seq_len, total_seq_len)
         """
         h = self.ln_1(x)
-        attn_out, attn_weights = self.attn(h)
+        if kv_cache is not None:
+            attn_out, attn_weights, kv_cache = self.attn(h, kv_cache)
+        else:
+            attn_out, attn_weights = self.attn(h)
+            kv_cache = None
         x = x + attn_out
 
         h = self.ln_2(x)
         ffn_out = self.ffn(h)
         x = x + ffn_out
 
+        if kv_cache is not None:
+            return x, attn_weights, kv_cache
         return x, attn_weights

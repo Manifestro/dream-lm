@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.positional_encoding import SinusoidalPositionalEncoding
 from dream_lm.core.transformer_layer import TransformerLayer
 
@@ -105,6 +106,39 @@ class DREAMLM(nn.Module):
 
         return logits
 
+    def forward_with_cache(
+        self, x: Tensor, kv_caches: list[KVCache | None]
+    ) -> tuple[Tensor, list[KVCache]]:
+        """Forward pass with KV-Cache for incremental inference.
+
+        Processes a single token (or short sequence) through the model,
+        updating the provided KV-Caches for each layer.
+
+        Args:
+            x: (batch, seq_len, d_model) — embedded input (already has PE)
+            kv_caches: list of KVCache (one per layer), or None for each layer
+
+        Returns:
+            logits: (batch, seq_len, vocab_size)
+            updated_caches: list of updated KVCache objects
+        """
+        caches_out: list[KVCache] = []
+
+        h = x
+        for i, layer in enumerate(self.layers):
+            cache_in = kv_caches[i] if i < len(kv_caches) else None
+            if cache_in is not None:
+                h, _, cache_out = layer(h, cache_in)
+                caches_out.append(cache_out)
+            else:
+                h, _ = layer(h)
+                caches_out.append(None)  # type: ignore[arg-type]
+
+        h = self.ln_f(h)
+        logits = self.w_vocab(h)
+
+        return logits, caches_out
+
     @torch.no_grad()
     def generate(
         self,
@@ -113,10 +147,11 @@ class DREAMLM(nn.Module):
         temperature: float = 1.0,
         top_k: int | None = None,
     ) -> list[int]:
-        """Autoregressive text generation.
+        """Autoregressive text generation with KV-Cache.
 
-        Uses the full context window (no KV-cache yet — Stage 3).
-        Each step re-processes the entire sequence through the model.
+        Processes the prompt once to build the initial KV-Cache,
+        then generates one token at a time using incremental inference.
+        O(n) total instead of O(n²) without cache.
 
         Spec §5:
             y_hat_t = softmax(W_vocab · h_t)
@@ -132,16 +167,35 @@ class DREAMLM(nn.Module):
         """
         tokens = list(prompt)
 
-        for _ in range(max_new_tokens):
-            # Truncate context to max_seq_len — PE buffer has fixed size
-            context = tokens[-self.pe.max_seq_len:]
-            x = torch.tensor([context], dtype=torch.long)
-            logits = self(x)  # (1, context_len, vocab_size)
+        # --- Phase 1: Process prompt, build initial KV-Cache ---
+        context = tokens[-self.pe.max_seq_len:]
+        x = torch.tensor([context], dtype=torch.long)
 
-            # Take last token predictions
-            logits = logits[0, -1, :]  # (vocab_size,)
+        # Embed + PE for the full prompt
+        h = self.embedding(x)  # (1, prompt_len, d_model)
+        h = self.pe(h)
 
-            # Greedy decoding for temperature=0, sampling otherwise
+        # Initialize caches (one per layer)
+        device = self.embedding.weight.device
+        kv_caches: list[KVCache | None] = [
+            KVCache.init(
+                batch=1,
+                n_heads=self.layers[0].attn.n_heads,
+                d_head=self.layers[0].attn.d_head,
+                device=device,
+                dtype=h.dtype,
+            )
+            for _ in range(len(self.layers))
+        ]
+
+        # Run through transformer stack with cache to populate it.
+        # The last position's logits give us the prediction for the next token.
+        logits, kv_caches = self.forward_with_cache(h, kv_caches)
+        logits = logits[0, -1, :]  # (vocab_size,)
+
+        # --- Phase 2: Generate tokens one at a time ---
+        for step in range(max_new_tokens):
+            # Sample from current logits
             if temperature == 0.0:
                 next_token = logits.argmax().item()
             else:
@@ -156,5 +210,14 @@ class DREAMLM(nn.Module):
                 probs = torch.softmax(logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1).item()
             tokens.append(next_token)
+
+            if step + 1 < max_new_tokens:
+                # Feed the newly generated token through the cache for next prediction
+                x_next = torch.tensor([[next_token]], dtype=torch.long, device=device)
+                h_next = self.embedding(x_next)  # (1, 1, d_model)
+                h_next = self.pe(h_next, offset=kv_caches[0].seq_len)
+
+                logits, kv_caches = self.forward_with_cache(h_next, kv_caches)
+                logits = logits[0, 0, :]  # (vocab_size,)
 
         return tokens

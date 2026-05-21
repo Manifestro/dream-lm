@@ -1,0 +1,34 @@
+{
+  "correctness": true,
+  "n_parameters": 799616,
+  "benchmarks": {
+    "short (32+20)": {
+      "cached_total_ms": 16.546985499735456,
+      "cached_ms_per_token": 0.8273492749867727,
+      "uncached_total_ms": 33.01122465247475,
+      "uncached_ms_per_token": 1.6505612326237376,
+      "speedup": 1.9949993098744494
+    },
+    "medium (64+32)": {
+      "cached_total_ms": 25.731852250646625,
+      "cached_ms_per_token": 0.804120382832707,
+      "uncached_total_ms": 67.79382778230406,
+      "uncached_ms_per_token": 2.118557118197002,
+      "speedup": 2.634626808903757
+    },
+    "long (128+32)": {
+      "cached_total_ms": 27.398910399824672,
+      "cached_ms_per_token": 0.856215949994521,
+      "uncached_total_ms": 106.3819003478705,
+      "uncached_ms_per_token": 3.324434385870953,
+      "speedup": 3.8827055089224003
+    },
+    "very long (200+32)": {
+      "cached_total_ms": 30.114322950066708,
+      "cached_ms_per_token": 0.9410725921895846,
+      "uncached_total_ms": 158.28296752158127,
+      "uncached_ms_per_token": 4.946342735049415,
+      "speedup": 5.256069272552935
+    }
+  }
+}
