@@ -212,7 +212,7 @@ class TestCacheShape:
 
         with torch.no_grad():
             initial_len = len(context)
-            _, kv_caches, _ = model.forward_with_cache(h, kv_caches)
+            _, kv_caches, _, _ = model.forward_with_cache(h, kv_caches)
             assert kv_caches[0].seq_len == initial_len
 
             # Generate 3 tokens
@@ -221,7 +221,7 @@ class TestCacheShape:
                 x_next = torch.tensor([next_id], dtype=torch.long)
                 h_next = model.embedding(x_next)
                 h_next = model.pe(h_next, offset=initial_len + step)
-                _, kv_caches, _ = model.forward_with_cache(h_next, kv_caches)
+                _, kv_caches, _, _ = model.forward_with_cache(h_next, kv_caches)
                 assert kv_caches[0].seq_len == initial_len + step + 1
 
 

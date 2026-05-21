@@ -23,6 +23,7 @@ from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.positional_encoding import SinusoidalPositionalEncoding
 from dream_lm.core.transformer_layer import TransformerLayer
 from dream_lm.core.ema import EMAStats
+from dream_lm.core.surprise_gate import SurpriseGate
 from dream_lm.core.predictive_coding import compute_perception_error, perception_error_norm
 
 
@@ -65,12 +66,15 @@ class DREAMLM(nn.Module):
         tie_embeddings: bool = True,
         fast_weight_r: int = 0,
         ema_alpha: float = 0.99,
+        gate_theta_0: float = 0.0,
+        gate_beta: float = 5.0,
     ) -> None:
         super().__init__()
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.fast_weight_r = fast_weight_r
         self.ema_alpha = ema_alpha
+        self.gate = SurpriseGate(theta_0=gate_theta_0, beta=gate_beta)
 
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pe = SinusoidalPositionalEncoding(d_model, max_seq_len)
@@ -139,12 +143,12 @@ class DREAMLM(nn.Module):
         x: Tensor,
         kv_caches: list[KVCache | None],
         ema_stats: EMAStats | None = None,
-    ) -> tuple[ModelOutput, list[KVCache | None], EMAStats | None]:
+    ) -> tuple[ModelOutput, list[KVCache | None], EMAStats | None, Tensor | None]:
         """Forward pass with KV-Cache for incremental inference.
 
         Processes a single token (or short sequence) through the model,
         updating the provided KV-Caches for each layer.
-        Optionally updates EMA statistics for perception error normalization.
+        Optionally updates EMA statistics and computes surprise gate.
 
         Args:
             x: (batch, seq_len, d_model) — embedded input (already has PE applied)
@@ -155,6 +159,7 @@ class DREAMLM(nn.Module):
             ModelOutput with logits and h_final
             updated_caches: list of updated KVCache objects (same objects, mutated in-place)
             updated_ema: EMAStats if provided, None otherwise
+            surprise_gate: (batch, seq_len) surprise values s_t ∈ [0,1], or None
         """
         caches_out: list[KVCache | None] = []
 
@@ -173,14 +178,16 @@ class DREAMLM(nn.Module):
 
         output = ModelOutput(logits=logits, h_final=h)
 
-        # EMA update (inference-time only, no gradient flow through EMA state)
+        # EMA update + surprise gate (inference-time only)
         updated_ema = ema_stats
+        surprise_out: Tensor | None = None
         if ema_stats is not None:
             eps_perc = compute_perception_error(logits, h, self.w_vocab.weight)
             eps_norm = perception_error_norm(eps_perc)  # (batch, seq_len)
-            ema_stats.update(eps_norm)
+            eps_norm_normalized = ema_stats.update(eps_norm)
+            surprise_out = self.gate.forward(eps_norm_normalized)  # (batch, seq_len)
 
-        return output, caches_out, updated_ema
+        return output, caches_out, updated_ema, surprise_out
 
     @torch.no_grad()
     def generate(
@@ -246,7 +253,7 @@ class DREAMLM(nn.Module):
         ema_stats = EMAStats.init(
             batch=1, alpha=self.ema_alpha, device=device, dtype=h.dtype
         )
-        output, kv_caches, ema_stats = self.forward_with_cache(h, kv_caches, ema_stats)
+        output, kv_caches, ema_stats, _ = self.forward_with_cache(h, kv_caches, ema_stats)
         logits = output.logits[0, -1, :]  # (vocab_size,)
 
         # Track actual token position — needed when FIFO truncation is active
@@ -279,7 +286,7 @@ class DREAMLM(nn.Module):
                 h_next = self.pe(h_next, offset=pos)
                 pos += 1
 
-                logits, kv_caches, ema_stats = self.forward_with_cache(h_next, kv_caches, ema_stats)
+                logits, kv_caches, ema_stats, _ = self.forward_with_cache(h_next, kv_caches, ema_stats)
                 logits = logits.logits[0, 0, :]  # (vocab_size,)
 
         return tokens

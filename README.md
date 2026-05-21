@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-6%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-121%20passed-2ea44f?style=flat-square)](#stage-6--done)
+[![Stage](https://img.shields.io/badge/stage-7%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-134%20passed-2ea44f?style=flat-square)](#stage-7--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -231,17 +231,42 @@ Normalized signal on untrained model (raw ‖ε^perc‖ was nearly constant):
 
 ---
 
+## Stage 7 — Done
+
+Surprise Gate (scalar) — sigmoid gate on normalized perception error:
+
+- `SurpriseGate` class — `s_t = σ(β·(‖ε_t‖_norm - θ_t))`, θ_0 constant, β fixed
+- `forward_with_cache` — returns surprise gate values s_t ∈ [0, 1] per position
+- `compute_threshold(token_history)` — extensible method, Stage 8 adds entropy term
+- Gate detects **statistical disruption**, not absolute error magnitude
+
+**13 / 13 new tests passed** · total: 134 / 134 (all stages)
+
+Gate behavior on untrained model (θ_0=2.0, β=5.0):
+
+| Metric | Value |
+|--------|-------|
+| Gate mean | 0.37 |
+| Gate std | 0.41 |
+| Positions > 0.8 (highly surprised) | 27% |
+| Positions < 0.2 (not surprised) | 55% |
+
+Bimodal distribution — gate is mostly "closed" or "open", few intermediate values. Gate responds to disruption in EMA statistics, not raw error magnitude. Slow drift is a blind spot (open question for Stage 8).
+
+---
+
 ## Quick Start
 
 ```bash
 uv sync
-uv run pytest                                          # all 121 tests
-uv run pytest tests/test_stage06.py -v                 # Stage 6 only
+uv run pytest                                          # all 134 tests
+uv run pytest tests/test_stage07.py -v                 # Stage 7 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
 PYTHONPATH=. uv run python experiments/stage04_verify.py # fast weights verification
 PYTHONPATH=. uv run python experiments/stage05_verify.py # perception error baseline
 PYTHONPATH=. uv run python experiments/stage06_verify.py # EMA normalization verification
+PYTHONPATH=. uv run python experiments/stage07_verify.py # surprise gate verification
 ```
 
 ---
@@ -249,7 +274,7 @@ PYTHONPATH=. uv run python experiments/stage06_verify.py # EMA normalization ver
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1-6: transformer blocks + model
+dream_lm/core/           # Stage 1-7: transformer blocks + model
   attention.py           # CausalAttention
   multihead.py           # MultiHeadAttention (KV-cache incremental forward, fast-weight augment)
   positional_encoding.py # SinusoidalPositionalEncoding (+ offset)
@@ -257,23 +282,25 @@ dream_lm/core/           # Stage 1-6: transformer blocks + model
   kv_cache.py            # KVCache dataclass (+ fast_weights field, Stage 4)
   fast_weights.py        # FastWeightState dataclass (Stage 4)
   predictive_coding.py   # compute_perception_error, perception_error_norm (Stage 5)
-  ema.py                 # EMAStats dataclass (NEW Stage 6)
+  ema.py                 # EMAStats dataclass (Stage 6)
+  surprise_gate.py       # SurpriseGate class (NEW Stage 7)
   tokenizer.py           # CharTokenizer (encode/decode, save/load)
-  model.py               # DREAMLM (+ ModelOutput, fast_weight_r, ema_alpha)
+  model.py               # DREAMLM (+ ModelOutput, fast_weight_r, ema_alpha, gate)
 dream_lm/train/          # Training infrastructure
   loop.py                # CharDataset, CosineWarmupScheduler, train() (+ ModelOutput support)
 dream_lm/eval/           # Metrics
   metrics.py             # perplexity, bits_per_char
-tests/                   # 121 tests (24 Stage 1 + 26 Stage 2 + 17 Stage 3 + 21 Stage 4 + 16 Stage 5 + 17 Stage 6)
+tests/                   # 134 tests (9 attention + 15 transformer + 26 S2 + 17 S3 + 21 S4 + 16 S5 + 17 S6 + 13 S7)
 experiments/             # launch scripts
   stage01_verify.py      # Stage 1: gradcheck + benchmarks
   stage02_train.py       # Train on tiny-shakespeare
   stage03_verify.py      # KV-cache correctness + benchmark
   stage04_verify.py      # Fast weights correctness + baseline identity
   stage05_verify.py      # Perception error baseline + correlation
-  stage06_verify.py      # EMA normalization verification (NEW Stage 6)
+  stage06_verify.py      # EMA normalization verification
+  stage07_verify.py      # Surprise gate verification (NEW Stage 7)
 configs/                 # YAML hyperparameter configs
-  stage02.yaml           # Stage 2 config (+ fast_weight_r, ema)
+  stage02.yaml           # Stage 2 config (+ fast_weight_r, ema, gate)
 ```
 
 ---

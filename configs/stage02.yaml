@@ -36,3 +36,7 @@ eval:
 ema:
   alpha: 0.99        # smoothing factor (0.9 = fast, 0.99 = medium, 0.999 = slow)
   eps: 1.0e-8        # numerical stability constant
+
+gate:
+  theta_0: 0.0       # base threshold (centered on EMA mean)
+  beta: 5.0          # gate temperature (higher = sharper transition)
