@@ -1,37 +1,34 @@
 """
-H3 Verification v3 -- STDP active during training.
+H3 Verification v4 -- U accumulates without decay during training.
 
-Fixes the root cause identified in v2: W_K/W_V were trained with U=0 at every step,
-so the fast-weight pathway was never load-bearing. STDP at inference only added noise.
+v3 root cause: TRAIN_STDP_LAMBDA=0.95 decayed U to near-zero between batches
+(||U_K||_train ~0.003 vs ||U_K||_inference ~2.5). W_K/W_V co-adapted with
+near-zero U, then received a large perturbation at inference they never saw.
 
-v3 correction: after each optimizer.step(), a no-grad STDP pass updates U_K/U_V
-from the same batch. W_K/W_V learn in a world where U is non-zero, so they develop
-"muscle memory" for using the fast-weight contribution.
+v4 correction: TRAIN_STDP_LAMBDA=1.0 -- no decay. U accumulates monotonically
+across batches and across epochs, bounded only by max_norm clipping. W_K/W_V
+learn in a world where U is large (saturated) from early in training.
+
+This is the minimal test: if the train/inference mismatch was the sole structural
+problem, H3 should show improvement. If not, the issue is deeper.
 
 Pipeline
 --------
-  [1] Train  -- DREAM-LM from scratch, r=16, STDP active at every training step
+  [1] Train  -- DREAM-LM from scratch, r=16, lambda=1.0 (no decay), STDP every step
   [2] Test A -- teacher forcing, 3 passes on same chunk (primary H3 test)
-  [3] Test B -- long free generation (comparison with v1/v2)
-  [4] Notes  -- write experiments/h3_v3_notes.md automatically
+  [3] Test B -- long free generation (comparison)
+  [4] Notes  -- write experiments/h3_v4_notes.md automatically
 
-H3 prediction in Test A
------------------------
-  STDP: mean(eps on pass 3) < mean(eps on pass 1)
-  Control: all passes identical (U=0 always)
-
-Changes vs v2
+Changes vs v3
 -------------
-  - train() now receives stdp_eta/lambda_decay/max_norm => STDP runs every training step
-  - TRAIN_STDP_ETA = 0.001 (10x lower than inference eta=0.01 -- no saturation during training)
-  - Everything else (Test A, Test B, notes format) is identical to v2
+  - TRAIN_STDP_LAMBDA = 1.0 (was 0.95) -- the only change
 
 Usage in Colab
 --------------
   !pip install torch numpy scipy pyyaml
   !git clone https://github.com/<your-repo>/dream-lm.git
   %cd dream-lm/dream-lm
-  !PYTHONPATH=. python experiments/h3_v3_colab.py
+  !PYTHONPATH=. python experiments/h3_v4_colab.py
 """
 
 import json
@@ -56,7 +53,7 @@ from dream_lm.core.predictive_coding import (
 )
 from dream_lm.train.loop import CharDataset, train
 
-RESULTS_DIR = Path(__file__).parent / "h3_v3_results"
+RESULTS_DIR = Path(__file__).parent / "h3_v4_results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================
@@ -96,7 +93,7 @@ TRAIN_CFG = dict(
 #   the full epoch — each batch adapts from near-zero, giving a fresh Hebbian signal.
 #   At inference (lambda=0.99), U persists across the sequence to test H3.
 TRAIN_STDP_ETA = 0.001
-TRAIN_STDP_LAMBDA = 0.95
+TRAIN_STDP_LAMBDA = 1.0   # no decay -- U accumulates across all batches and epochs
 TRAIN_STDP_MAX_NORM = 1.0
 
 TEST_A_N_CHUNKS = 5
@@ -109,7 +106,7 @@ TEST_B_GEN_LEN = 400
 
 DATA_FILE = Path("data/tiny-shakespeare.txt")
 VOCAB_FILE = Path("data/vocab.json")
-MODEL_FILE = Path("models/h3_v3_model.pt")
+MODEL_FILE = Path("models/h3_v4_model.pt")
 
 
 # ============================================================
@@ -129,7 +126,7 @@ def _download_shakespeare():
 
 def load_data_and_train():
     """Train fresh model with fast_weight_r=16 AND STDP active every step."""
-    print("[1/4] Training model with fast_weight_r=16, STDP in training loop...")
+    print("[1/4] Training model with fast_weight_r=16, STDP lambda=1.0 (no decay)...")
 
     text = _download_shakespeare()
     print(f"  Corpus: {len(text):,} chars")
@@ -497,15 +494,17 @@ def write_notes(train_history, results_a, results_b):
     )
 
     notes = f"""\
-# H3 Experiment v3 -- Notes
+# H3 Experiment v4 -- Notes
 
 ## What was expected
 
-v2 confirmed the root cause: W_K/W_V were trained with U=0 at every step, so STDP
-at inference added noise into a pathway the model never learned to use.
+v3 added STDP to the training loop but used lambda=0.95, which decayed U to near-zero
+between batches (||U_K||_train ~0.003). W_K/W_V still co-adapted with near-zero U while
+inference saw ||U_K|| ~2.5 -- the train/inference mismatch persisted.
 
-v3 fix: STDP now runs after every optimizer.step() during training (eta={TRAIN_STDP_ETA},
-lambda={TRAIN_STDP_LAMBDA}). W_K/W_V learn in a world where U is non-zero.
+v4 fix: TRAIN_STDP_LAMBDA=1.0 -- no decay. U accumulates monotonically across all
+batches and epochs (bounded by max_norm={TRAIN_STDP_MAX_NORM}). W_K/W_V learn in a
+world where U is large from early in training. This directly eliminates the mismatch.
 
 H3 prediction in Test A: STDP net gain > 5% over control reduction, p < 0.05.
 Control runs 3 identical passes (fresh U=0 each time) to isolate positional effects.
@@ -573,12 +572,13 @@ Verdict: **H3 {verdict}**
             "If attention patterns are already collapsed, K perturbations have no effect.\n\n"
             "**Signal too weak** -- r=16 with max_norm=1.0 may be insufficient. "
             "Try r=32 or max_norm=2.0.\n\n"
-            "**Lambda too aggressive** -- TRAIN_STDP_LAMBDA=0.95 means U decays to "
-            "near-zero each batch. W_K/W_V may not learn from a signal this transient. "
-            "Try lambda=0.99 during training too.\n"
+            "**Signal structurally absent** -- with lambda=1.0 and STDP active every "
+            "training step, W_K/W_V had every opportunity to use U. That they still "
+            "don't suggests H3 requires a fundamentally different architecture or "
+            "training objective. Consider Path B (episodic memory framing).\n"
         )
 
-    notes_path = Path(__file__).parent / "h3_v3_notes.md"
+    notes_path = Path(__file__).parent / "h3_v4_notes.md"
     notes_path.write_text(notes, encoding="utf-8")
     print(f"\nNotes written to {notes_path}")
     return str(notes_path)
@@ -590,8 +590,8 @@ Verdict: **H3 {verdict}**
 
 def main():
     print("=" * 60)
-    print("H3 Verification v3 -- STDP in training loop")
-    print("  Trains r=16 model WITH STDP at every training step")
+    print("H3 Verification v4 -- U no decay (lambda=1.0) during training")
+    print("  Trains r=16 model, U accumulates across all batches and epochs")
     print("=" * 60)
 
     model, tokenizer, text, history, device = load_data_and_train()
@@ -642,7 +642,7 @@ def main():
         "test_a": results_a,
         "test_b": results_b,
     }
-    out_path = RESULTS_DIR / "h3_v3_results.json"
+    out_path = RESULTS_DIR / "h3_v4_results.json"
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\nResults saved to {out_path}")
