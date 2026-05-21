@@ -1,0 +1,33 @@
+# Hyperparameter configuration for Stage 2 training.
+#
+# All values controlled here — no magic numbers in code.
+
+model:
+  d_model: 128
+  n_heads: 4
+  n_layers: 4
+  ff_mult: 4
+  max_seq_len: 256
+  activation: "gelu"
+  tie_embeddings: true
+
+training:
+  lr: 3.0e-4
+  weight_decay: 0.1
+  grad_clip: 1.0
+  batch_size: 64
+  seq_len: 128
+  epochs: 10
+  warmup_steps: 100
+  scheduler: "cosine"
+  device: "cpu"   # "cpu" or "cuda"
+
+data:
+  corpus: "data/tiny-shakespeare.txt"
+  vocab_file: "data/vocab.json"
+  val_split: 0.05
+
+eval:
+  target_perplexity: 15.0
+  sample_length: 256
+  temperatures: [0.6, 0.8, 1.0, 1.2]

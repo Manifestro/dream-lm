@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-1%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-24%20passed-2ea44f?style=flat-square)](#stage-1--done)
+[![Stage](https://img.shields.io/badge/stage-2%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-50%20passed-2ea44f?style=flat-square)](#stage-2--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -81,7 +81,7 @@ Full specification → [manifestro.io](https://manifestro.io)
 
 | Phase | Stages | Theme | Status |
 |-------|--------|-------|--------|
-| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1 done** · 2–4 open |
+| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-2 done** · 3-4 open |
 | II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | open |
 | III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | open |
 | IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | open |
@@ -116,13 +116,38 @@ Stack baseline for Stage 17 (batch=4 · seq=128 · d=256 · h=8):
 
 ---
 
+## Stage 2 — Done
+
+Full autoregressive language model on top of Stage 1 transformer:
+
+- `CharTokenizer` — encode/decode, vocab persistence (JSON), `<unk>` fallback in decode
+- `DREAMLM` — embedding → PE → TransformerLayer × 4 → LayerNorm → W_vocab (tied weights)
+- `train.loop` — CharDataset, AdamW + cosine warmup, gradient clipping
+- `eval.metrics` — perplexity, bits-per-char
+
+**26 / 26 tests passed** · total: 50 / 50 (Stage 1 + Stage 2)
+
+Training on tiny-shakespeare (1.1M chars, 66-char vocab):
+
+| Metric | Value |
+|--------|-------|
+| Baseline perplexity | 66.0 (random) |
+| Final perplexity | **10.75** |
+| Target | < 15.0 |
+| Training time | 205s (CPU) |
+| Parameters | 799,744 |
+
+Loss decreased monotonically from 3.53 → 2.38. Model learned character-level patterns (dialogue structure, punctuation, common sequences).
+
+---
+
 ## Quick Start
 
 ```bash
 uv sync
-uv run pytest                                          # all 24 tests
-uv run pytest tests/test_attention.py -v               # attention module only
-PYTHONPATH=. uv run python experiments/stage01_verify.py  # gradcheck + benchmarks
+uv run pytest                                          # all 50 tests
+uv run pytest tests/test_stage02.py -v                 # Stage 2 only
+PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 ```
 
 ---
@@ -130,14 +155,22 @@ PYTHONPATH=. uv run python experiments/stage01_verify.py  # gradcheck + benchmar
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1: verified transformer blocks
+dream_lm/core/           # Stage 1-2: transformer blocks + model
   attention.py           # CausalAttention
   multihead.py           # MultiHeadAttention
   positional_encoding.py # SinusoidalPositionalEncoding
   transformer_layer.py   # TransformerLayer, FeedForward
-tests/                   # 24 tests, 3 types per block minimum
-experiments/             # verification scripts
-configs/                 # YAML hyperparameter configs (Stage 2+)
+  tokenizer.py           # CharTokenizer (encode/decode, save/load)
+  model.py               # DREAMLM (full autoregressive LM)
+dream_lm/train/          # Training infrastructure
+  loop.py                # CharDataset, CosineWarmupScheduler, train()
+dream_lm/eval/           # Metrics
+  metrics.py             # perplexity, bits_per_char
+tests/                   # 50 tests (24 Stage 1 + 26 Stage 2)
+experiments/             # launch scripts
+  stage02_train.py       # Train on tiny-shakespeare
+configs/                 # YAML hyperparameter configs
+  stage02.yaml           # Stage 2 config
 ```
 
 ---

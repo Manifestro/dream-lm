@@ -9,3 +9,10 @@ wheels/
 # Virtual environments
 .venv
 .pytest_cache/
+
+# DREAM-LM: data and model weights
+data/
+models/
+*.pt
+*.bin
+*.ckpt
