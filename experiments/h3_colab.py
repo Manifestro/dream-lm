@@ -41,7 +41,7 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # ============================================================
 NUM_PROMPTS = 10
 PROMPT_LENGTH = 100  # characters
-GENERATION_LENGTH = 256  # tokens per prompt
+GENERATION_LENGTH = 128  # tokens per prompt (prompt ~100 + gen must fit in max_seq_len=256)
 
 STDP_CONFIG = {
     "eta": 0.01,
