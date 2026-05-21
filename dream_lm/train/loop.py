@@ -16,6 +16,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
+from dream_lm.core.ema import EMAStats
+from dream_lm.core.fast_weights import FastWeightState
+from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.model import DREAMLM
 from dream_lm.eval.metrics import perplexity
 
@@ -85,18 +88,41 @@ def train_epoch(
     device: str,
     grad_clip: float = 1.0,
     global_step: int = 0,
-) -> tuple[float, int, int]:
+    fast_weight_states: list[FastWeightState] | None = None,
+    ema_stdp: EMAStats | None = None,
+    stdp_eta: float | None = None,
+    stdp_lambda_decay: float | None = None,
+    stdp_max_norm: float | None = None,
+    stdp_warmup_steps: int = 0,
+) -> tuple[float, int, int, float | None, EMAStats | None]:
     """Train for one epoch.
 
+    When stdp_eta/lambda_decay/max_norm and fast_weight_states are all provided,
+    runs a no-grad STDP pass after each gradient step. fast_weight_states are
+    mutated in-place — U_K/U_V carry across batches and across epoch calls.
+
     Returns:
-        (total_loss, num_batches, new_global_step)
+        (total_loss, num_batches, new_global_step, mean_u_k_norm, updated_ema_stdp)
+        mean_u_k_norm is None when STDP is not active.
     """
     model.train()
     total_loss = 0.0
     n_batches = 0
+    use_stdp = (
+        stdp_eta is not None
+        and stdp_lambda_decay is not None
+        and stdp_max_norm is not None
+        and fast_weight_states is not None
+    )
+    u_norms: list[float] = []
+
+    n_heads = model.layers[0].attn.n_heads
+    d_head = model.layers[0].attn.d_head
+    dtype = next(model.parameters()).dtype
 
     for x, y in dataloader:
         x, y = x.to(device), y.to(device)
+        batch = x.shape[0]
 
         optimizer.zero_grad()
         out = model(x)  # ModelOutput(logits=(batch, seq_len, vocab_size), h_final=...)
@@ -119,9 +145,45 @@ def train_epoch(
 
         total_loss += loss.item()
         n_batches += 1
+
+        # STDP update pass (no_grad) — base weights are already updated above.
+        # W_K/W_V will see non-zero U at each training step and co-adapt with it.
+        if use_stdp and global_step >= stdp_warmup_steps:
+            with torch.no_grad():
+                # Reinit EMA if batch size changed (e.g., last batch in epoch)
+                if ema_stdp is None or ema_stdp.mu.shape[0] != batch:
+                    ema_stdp = EMAStats.init(
+                        batch, alpha=model.ema_alpha, device=device, dtype=dtype
+                    )
+
+                # Fresh KV caches per batch (no attention history across sequences)
+                # but carry persistent U_K/U_V via fast_weight_states references
+                kv_caches = [
+                    KVCache.init(batch, n_heads, d_head, device, dtype, fast_weights=fw)
+                    for fw in fast_weight_states
+                ]
+
+                # forward_with_cache expects pre-embedded input
+                h = model.embedding(x)
+                h = model.pe(h)
+
+                model.forward_with_cache(
+                    h, kv_caches, ema_stdp,
+                    stdp_eta=stdp_eta,
+                    stdp_lambda_decay=stdp_lambda_decay,
+                    stdp_max_norm=stdp_max_norm,
+                )
+                # fast_weight_states[i].u_k/u_v mutated in-place through kv_caches refs
+
+                u_norms.append(
+                    sum(fw.u_k.norm().item() for fw in fast_weight_states)
+                    / len(fast_weight_states)
+                )
+
         global_step += 1
 
-    return total_loss, n_batches, global_step
+    mean_u_norm = (sum(u_norms) / len(u_norms)) if u_norms else None
+    return total_loss, n_batches, global_step, mean_u_norm, ema_stdp
 
 
 @torch.no_grad()
@@ -163,14 +225,23 @@ def train(
     epochs: int = 10,
     warmup_steps: int = 100,
     device: str = "cpu",
-    log_every: int = 100,
+    log_every: int = 1,
+    stdp_eta: float | None = None,
+    stdp_lambda_decay: float | None = None,
+    stdp_max_norm: float | None = None,
+    stdp_warmup_steps: int = 0,
 ) -> dict:
     """Full training loop.
 
     Spec §12 — standard LM training with AdamW + cosine scheduler.
 
+    When stdp_eta/lambda_decay/max_norm are provided and model.fast_weight_r > 0,
+    runs STDP after each gradient step so W_K/W_V co-adapt with U during training.
+    Fast weight state persists across epochs — U accumulates and decays continuously.
+
     Returns:
-        history dict with train_loss, val_loss, perplexity per epoch
+        history dict with train_loss, val_loss, perplexity, lr per epoch.
+        Also includes u_k_norm when STDP is active.
     """
     model = model.to(device)
 
@@ -179,16 +250,49 @@ def train(
     total_steps = epochs * len(train_loader)
     scheduler = CosineWarmupScheduler(warmup_steps, total_steps, lr)
 
-    history = {"train_loss": [], "val_loss": [], "perplexity": [], "lr": []}
+    use_stdp = (
+        stdp_eta is not None
+        and stdp_lambda_decay is not None
+        and stdp_max_norm is not None
+        and model.fast_weight_r > 0
+    )
+
+    # STDP state — persists across epochs so U accumulates over the full training run
+    fast_weight_states: list[FastWeightState] | None = None
+    ema_stdp: EMAStats | None = None
+    if use_stdp:
+        n_heads = model.layers[0].attn.n_heads
+        d_head = model.layers[0].attn.d_head
+        dtype = next(model.parameters()).dtype
+        fast_weight_states = [
+            FastWeightState.init(n_heads, d_head, model.fast_weight_r, device, dtype)
+            for _ in range(len(model.layers))
+        ]
+
+    history: dict = {"train_loss": [], "val_loss": [], "perplexity": [], "lr": []}
+    if use_stdp:
+        history["u_k_norm"] = []
+
     global_step = 0
 
     print(f"Training: {epochs} epochs, {len(train_loader)} batches/epoch, lr={lr}")
     print(f"Warmup: {warmup_steps} steps, total steps: {total_steps}")
+    if use_stdp:
+        print(
+            f"STDP: eta={stdp_eta}, lambda={stdp_lambda_decay}, "
+            f"max_norm={stdp_max_norm}, warmup={stdp_warmup_steps} steps"
+        )
 
     for epoch in range(epochs):
         t0 = time.time()
-        train_loss, n_batches, global_step = train_epoch(
-            model, train_loader, optimizer, scheduler, device, grad_clip, global_step
+        train_loss, n_batches, global_step, mean_u_norm, ema_stdp = train_epoch(
+            model, train_loader, optimizer, scheduler, device, grad_clip, global_step,
+            fast_weight_states=fast_weight_states,
+            ema_stdp=ema_stdp,
+            stdp_eta=stdp_eta if use_stdp else None,
+            stdp_lambda_decay=stdp_lambda_decay if use_stdp else None,
+            stdp_max_norm=stdp_max_norm if use_stdp else None,
+            stdp_warmup_steps=stdp_warmup_steps,
         )
 
         val_loss = evaluate(model, val_loader, device)
@@ -201,8 +305,13 @@ def train(
         history["val_loss"].append(val_loss)
         history["perplexity"].append(val_ppl)
         history["lr"].append(current_lr)
+        if use_stdp:
+            history["u_k_norm"].append(mean_u_norm)
 
         if (epoch + 1) % log_every == 0 or epoch == 0:
+            u_info = (
+                f" | ‖U_K‖: {mean_u_norm:.4f}" if use_stdp and mean_u_norm is not None else ""
+            )
             print(
                 f"Epoch {epoch + 1}/{epochs} | "
                 f"train_loss: {history['train_loss'][-1]:.4f} | "
@@ -210,6 +319,7 @@ def train(
                 f"val_ppl: {val_ppl:.2f} | "
                 f"lr: {current_lr:.2e} | "
                 f"time: {epoch_time:.1f}s"
+                + u_info
             )
 
     print(f"\nFinal perplexity: {history['perplexity'][-1]:.2f} (target: <15.0)")
