@@ -131,8 +131,8 @@ class TestOutputIdentity:
             context = tokens[-model.pe.max_seq_len:]
             x = torch.tensor([context], dtype=torch.long)
             with torch.no_grad():
-                logits = model(x)
-            logits = logits[0, -1, :]
+                out = model(x)
+            logits = out.logits[0, -1, :]
             if temperature == 0.0:
                 next_token = logits.argmax().item()
             else:
@@ -253,8 +253,8 @@ class TestSpeedup:
             context = tokens[-model.pe.max_seq_len:]
             x = torch.tensor([context], dtype=torch.long)
             with torch.no_grad():
-                logits = model(x)
-            next_token = logits[0, -1, :].argmax().item()
+                out = model(x)
+            next_token = out.logits[0, -1, :].argmax().item()
             tokens.append(next_token)
         uncached_time = time.perf_counter() - t0
 
@@ -274,8 +274,8 @@ class TestGradientFlow:
         model.train()
 
         x = torch.randint(0, 65, (2, 16))
-        logits = model(x)  # no cache path
-        loss = F.cross_entropy(logits.view(-1, 65), torch.randint(0, 65, (2, 16)).view(-1))
+        out = model(x)  # no cache path
+        loss = F.cross_entropy(out.logits.view(-1, 65), torch.randint(0, 65, (2, 16)).view(-1))
         loss.backward()
 
         # All parameters should have gradients
@@ -297,8 +297,8 @@ class TestGradientFlow:
         # Now switch to training mode and verify backward works
         model.train()
         x = torch.randint(0, 65, (2, 16))
-        logits = model(x)
-        loss = F.cross_entropy(logits.view(-1, 65), torch.randint(0, 65, (2, 16)).view(-1))
+        out = model(x)
+        loss = F.cross_entropy(out.logits.view(-1, 65), torch.randint(0, 65, (2, 16)).view(-1))
         loss.backward()
 
         for name, param in model.named_parameters():

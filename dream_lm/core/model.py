@@ -15,12 +15,30 @@ parameter efficiency and better generalization).
 
 import torch
 import torch.nn as nn
+from dataclasses import dataclass
 from torch import Tensor
 
 from dream_lm.core.fast_weights import FastWeightState
 from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.positional_encoding import SinusoidalPositionalEncoding
 from dream_lm.core.transformer_layer import TransformerLayer
+
+
+@dataclass
+class ModelOutput:
+    """Output of DREAMLM forward pass.
+
+    Designed for backward compatibility: existing code that expects logits
+    can use out.logits (attribute access) or out[0] (tuple indexing).
+    New code gains access to h_final for perception error computation.
+    """
+
+    logits: Tensor       # (batch, seq_len, vocab_size)
+    h_final: Tensor      # (batch, seq_len, d_model) — after final LayerNorm
+
+    def __getitem__(self, index: int):
+        """Support tuple-like unpacking: logits, h_final = model(x)."""
+        return (self.logits, self.h_final)[index]
 
 
 class DREAMLM(nn.Module):
@@ -88,13 +106,15 @@ class DREAMLM(nn.Module):
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> ModelOutput:
         """
         Args:
             x: (batch, seq_len) — token IDs
 
         Returns:
-            logits: (batch, seq_len, vocab_size)
+            ModelOutput with:
+                logits: (batch, seq_len, vocab_size)
+                h_final: (batch, seq_len, d_model) — after final LayerNorm
         """
         # Embed + positional encoding
         h = self.embedding(x)  # (batch, seq_len, d_model)
@@ -108,11 +128,11 @@ class DREAMLM(nn.Module):
         h = self.ln_f(h)
         logits = self.w_vocab(h)  # (batch, seq_len, vocab_size)
 
-        return logits
+        return ModelOutput(logits=logits, h_final=h)
 
     def forward_with_cache(
         self, x: Tensor, kv_caches: list[KVCache | None]
-    ) -> tuple[Tensor, list[KVCache | None]]:
+    ) -> tuple[ModelOutput, list[KVCache | None]]:
         """Forward pass with KV-Cache for incremental inference.
 
         Processes a single token (or short sequence) through the model,
@@ -123,7 +143,7 @@ class DREAMLM(nn.Module):
             kv_caches: list of KVCache (one per layer), or None for each layer
 
         Returns:
-            logits: (batch, seq_len, vocab_size)
+            ModelOutput with logits and h_final
             updated_caches: list of updated KVCache objects (same objects, mutated in-place)
         """
         caches_out: list[KVCache | None] = []
@@ -141,7 +161,7 @@ class DREAMLM(nn.Module):
         h = self.ln_f(h)
         logits = self.w_vocab(h)
 
-        return logits, caches_out
+        return ModelOutput(logits=logits, h_final=h), caches_out
 
     @torch.no_grad()
     def generate(
@@ -204,8 +224,8 @@ class DREAMLM(nn.Module):
 
         # Run through transformer stack with cache to populate it.
         # The last position's logits give us the prediction for the next token.
-        logits, kv_caches = self.forward_with_cache(h, kv_caches)
-        logits = logits[0, -1, :]  # (vocab_size,)
+        output, kv_caches = self.forward_with_cache(h, kv_caches)
+        logits = output.logits[0, -1, :]  # (vocab_size,)
 
         # Track actual token position — needed when FIFO truncation is active
         # (kv_cache.seq_len would be capped at max_cache_len, but PE offset must
@@ -238,6 +258,6 @@ class DREAMLM(nn.Module):
                 pos += 1
 
                 logits, kv_caches = self.forward_with_cache(h_next, kv_caches)
-                logits = logits[0, 0, :]  # (vocab_size,)
+                logits = logits.logits[0, 0, :]  # (vocab_size,)
 
         return tokens

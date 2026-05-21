@@ -84,17 +84,17 @@ class TestDREAMLM:
         """Logits have shape (batch, seq_len, vocab_size)."""
         model = self._make_model()
         x = torch.randint(0, 65, (4, 32))
-        logits = model(x)
-        assert logits.shape == (4, 32, 65)
+        out = model(x)
+        assert out.logits.shape == (4, 32, 65)
 
     def test_numerical_stability(self):
         """No NaN/Inf on random input."""
         model = self._make_model()
         for _ in range(5):
             x = torch.randint(0, 65, (2, 64))
-            logits = model(x)
-            assert not torch.isnan(logits).any()
-            assert not torch.isinf(logits).any()
+            out = model(x)
+            assert not torch.isnan(out.logits).any()
+            assert not torch.isinf(out.logits).any()
 
     def test_weight_tying(self):
         """When tie_embeddings=True, W_vocab shares weights with embedding."""
@@ -110,23 +110,23 @@ class TestDREAMLM:
         """Each batch element produces independent output."""
         model = self._make_model()
         x = torch.randint(0, 65, (2, 16))
-        logits = model(x)
+        out = model(x)
         # Different inputs should produce different outputs
-        assert not torch.allclose(logits[0], logits[1], atol=1e-4)
+        assert not torch.allclose(out.logits[0], out.logits[1], atol=1e-4)
 
     def test_causal_mask_propagation(self):
         """Model doesn't crash with causal mask (inherited from Stage 1)."""
         model = self._make_model()
         x = torch.randint(0, 65, (1, 1))
-        logits = model(x)
-        assert logits.shape == (1, 1, 65)
+        out = model(x)
+        assert out.logits.shape == (1, 1, 65)
 
     def test_long_sequence(self):
         """Model handles sequences up to max_seq_len."""
         model = self._make_model(max_seq_len=256)
         x = torch.randint(0, 65, (1, 256))
-        logits = model(x)
-        assert logits.shape == (1, 256, 65)
+        out = model(x)
+        assert out.logits.shape == (1, 256, 65)
 
     def test_sequence_exceeds_max(self):
         """Model raises error when seq_len > max_seq_len."""
@@ -139,8 +139,8 @@ class TestDREAMLM:
         """Gradients flow through all parameters."""
         model = self._make_model()
         x = torch.randint(0, 65, (2, 16))
-        logits = model(x)
-        loss = logits.sum()
+        out = model(x)
+        loss = out.logits.sum()
         loss.backward()
         for name, param in model.named_parameters():
             assert param.grad is not None, f"No gradient for {name}"

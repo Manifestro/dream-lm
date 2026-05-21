@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-4%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-88%20passed-2ea44f?style=flat-square)](#stage-4--done)
+[![Stage](https://img.shields.io/badge/stage-5%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-120%20passed-2ea44f?style=flat-square)](#stage-5--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -82,7 +82,7 @@ Full specification → [manifestro.io](https://manifestro.io)
 | Phase | Stages | Theme | Status |
 |-------|--------|-------|--------|
 | I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-4 done** |
-| II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | open |
+| II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | **5 done** · 6-8 open |
 | III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | open |
 | IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | open |
 | V — Memory | 16 – 17 | Sleep / consolidation, multi-layer stack | open |
@@ -185,15 +185,40 @@ Fast weights are zero-initialized — augmentation is a no-op until U is updated
 
 ---
 
+## Stage 5 — Done
+
+Perception error (ε^perc) — the first self-prediction signal:
+
+- `ModelOutput` dataclass — `forward()` returns `(logits, h_final)` with backward compat via `__getitem__`
+- `compute_perception_error` — ε^perc = h_final - W_vocab^T @ softmax(logits), einsum "vd,bsv->bsd"
+- `perception_error_norm` — per-position L2 norm (batch, seq)
+- `predictive_coding.py` — new module, works with and without gradients
+
+**16 / 16 new tests passed** · total: 120 / 120 (all stages)
+
+Baseline measurements on untrained model (random input, d_model=128):
+
+| Metric | Value |
+|--------|-------|
+| Mean ‖ε^perc‖ | 11.31 |
+| Std ‖ε^perc‖ | 0.001 (nearly constant) |
+| Pearson correlation with CE loss | -0.01 |
+| Spearman rank correlation | -0.03 |
+
+ε^perc is nearly constant for a random model — this is expected. The error signal becomes structured after the Goal Block (Stage 13) adds intention modulation, and after EMA normalization (Stage 6) amplifies relative deviations. The baseline measured here serves as the comparison point for Stage 12 (integration test).
+
+---
+
 ## Quick Start
 
 ```bash
 uv sync
-uv run pytest                                          # all 88 tests
-uv run pytest tests/test_stage04.py -v                 # Stage 4 only
+uv run pytest                                          # all 120 tests
+uv run pytest tests/test_stage05.py -v                 # Stage 5 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
 PYTHONPATH=. uv run python experiments/stage04_verify.py # fast weights verification
+PYTHONPATH=. uv run python experiments/stage05_verify.py # perception error baseline
 ```
 
 ---
@@ -201,25 +226,27 @@ PYTHONPATH=. uv run python experiments/stage04_verify.py # fast weights verifica
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1-4: transformer blocks + model
+dream_lm/core/           # Stage 1-5: transformer blocks + model
   attention.py           # CausalAttention
   multihead.py           # MultiHeadAttention (KV-cache incremental forward, fast-weight augment)
   positional_encoding.py # SinusoidalPositionalEncoding (+ offset)
   transformer_layer.py   # TransformerLayer, FeedForward
   kv_cache.py            # KVCache dataclass (+ fast_weights field, Stage 4)
-  fast_weights.py        # FastWeightState dataclass (NEW Stage 4)
+  fast_weights.py        # FastWeightState dataclass (Stage 4)
+  predictive_coding.py   # compute_perception_error, perception_error_norm (NEW Stage 5)
   tokenizer.py           # CharTokenizer (encode/decode, save/load)
-  model.py               # DREAMLM (full autoregressive LM + KV-cache + fast_weight_r)
+  model.py               # DREAMLM (+ ModelOutput, fast_weight_r)
 dream_lm/train/          # Training infrastructure
-  loop.py                # CharDataset, CosineWarmupScheduler, train()
+  loop.py                # CharDataset, CosineWarmupScheduler, train() (+ ModelOutput support)
 dream_lm/eval/           # Metrics
   metrics.py             # perplexity, bits_per_char
-tests/                   # 88 tests (24 Stage 1 + 26 Stage 2 + 17 Stage 3 + 21 Stage 4)
+tests/                   # 120 tests (24 Stage 1 + 26 Stage 2 + 17 Stage 3 + 21 Stage 4 + 16 Stage 5)
 experiments/             # launch scripts
   stage01_verify.py      # Stage 1: gradcheck + benchmarks
   stage02_train.py       # Train on tiny-shakespeare
   stage03_verify.py      # KV-cache correctness + benchmark
-  stage04_verify.py      # Fast weights correctness + baseline identity (NEW Stage 4)
+  stage04_verify.py      # Fast weights correctness + baseline identity
+  stage05_verify.py      # Perception error baseline + correlation (NEW Stage 5)
 configs/                 # YAML hyperparameter configs
   stage02.yaml           # Stage 2 config (+ fast_weight_r)
 ```
@@ -228,7 +255,7 @@ configs/                 # YAML hyperparameter configs
 
 ## Open Questions
 
-1. Does $\varepsilon^{\text{perc}}$ carry enough signal to drive useful adaptation — or is the vocab projection too narrow a bottleneck? *(tested in Stage 5)*
+1. Does $\varepsilon^{\text{perc}}$ carry enough signal to drive useful adaptation — or is the vocab projection too narrow a bottleneck? *(Stage 5 baseline: correlation ≈ 0 on raw model, will re-test after Stage 12 integration)*
 2. Does the Goal Block learn genuine intention, or collapse into a residual connection? *(tested in Stage 13)*
 3. Is Sleep necessary over $\lambda$-decay alone? *(tested in Stage 16)*
 4. Can $g_t$ be decoded into natural language? *(open)*

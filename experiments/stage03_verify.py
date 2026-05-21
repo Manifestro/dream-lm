@@ -56,8 +56,8 @@ def benchmark_cached_vs_uncached(
             for _ in range(n_gen_tokens):
                 context = tokens[-model.pe.max_seq_len:]
                 x = torch.tensor([context], dtype=torch.long)
-                logits = model(x)
-                next_token = logits[0, -1, :].argmax().item()
+                out = model(x)
+                next_token = out.logits[0, -1, :].argmax().item()
                 tokens.append(next_token)
         elapsed = time.perf_counter() - t0
         times_uncached.append(elapsed)
@@ -92,8 +92,8 @@ def verify_correctness(model: DREAMLM, n_tests: int = 10) -> bool:
             for _ in range(n_gen):
                 context = tokens[-model.pe.max_seq_len:]
                 x = torch.tensor([context], dtype=torch.long)
-                logits = model(x)
-                next_token = logits[0, -1, :].argmax().item()
+                out = model(x)
+                next_token = out.logits[0, -1, :].argmax().item()
                 tokens.append(next_token)
 
         if tokens_cached != tokens:

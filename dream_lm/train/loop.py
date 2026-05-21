@@ -99,7 +99,8 @@ def train_epoch(
         x, y = x.to(device), y.to(device)
 
         optimizer.zero_grad()
-        logits = model(x)  # (batch, seq_len, vocab_size)
+        out = model(x)  # ModelOutput(logits=(batch, seq_len, vocab_size), h_final=...)
+        logits = out.logits
 
         loss = nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)),
@@ -140,7 +141,8 @@ def evaluate(
 
     for x, y in dataloader:
         x, y = x.to(device), y.to(device)
-        logits = model(x)
+        out = model(x)
+        logits = out.logits
         loss = nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)),
             y.view(-1),
