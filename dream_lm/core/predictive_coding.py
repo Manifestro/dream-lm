@@ -64,3 +64,27 @@ def perception_error_norm(eps_perc: Tensor) -> Tensor:
         norm: (batch, seq_len) — per-position L2 norm
     """
     return torch.linalg.vector_norm(eps_perc, dim=-1)  # (batch, seq_len)
+
+
+def perception_error_groups(eps_perc: Tensor, G: int) -> Tensor:
+    """Compute per-group mean absolute perception error.
+
+    Splits d_model into G contiguous groups and computes mean(|ε|) per group.
+    Preserves spatial structure lost by scalar L2 norm — different channel
+    groups may respond to different types of prediction error (semantic,
+    syntactic, positional, etc.).
+
+    Args:
+        eps_perc: (batch, seq_len, d_model)
+        G: number of channel groups (must divide d_model evenly)
+
+    Returns:
+        groups: (batch, seq_len, G) — per-group mean absolute error
+    """
+    batch, seq_len, d_model = eps_perc.shape
+    assert d_model % G == 0, f"d_model={d_model} not divisible by G={G}"
+
+    group_size = d_model // G
+    # Reshape to (batch, seq_len, G, group_size), take mean over last dim
+    grouped = eps_perc.abs().view(batch, seq_len, G, group_size)
+    return grouped.mean(dim=-1)  # (batch, seq_len, G)

@@ -71,3 +71,73 @@ class SurpriseGate:
         """
         threshold = self.compute_threshold()
         return torch.sigmoid(self.beta * (eps_norm - threshold))
+
+
+class VectorizedGate:
+    """Per-channel-group surprise gate.
+
+    Each of G channel groups gets its own β_i temperature, allowing
+    different groups to respond with different sensitivity to surprise.
+    Some channels may be "trigger happy" (high β), others conservative.
+
+    Spec §8:
+        s_t^(i) = σ(β_i · (|ε_t^(i)|_norm - θ_i))
+
+    Attributes:
+        theta_0: base threshold per group — (G,) or scalar
+        beta: per-group temperature — (G,)
+    """
+
+    def __init__(
+        self,
+        G: int,
+        theta_0: float | Tensor = 0.0,
+        beta: float | Tensor = 5.0,
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ) -> None:
+        """
+        Args:
+            G: number of channel groups
+            theta_0: base threshold — scalar (shared) or (G,) per-group
+            beta: gate temperature — scalar (shared) or (G,) per-group
+            device: device for parameter tensors
+            dtype: dtype for parameter tensors
+        """
+        self.G = G
+
+        # Normalize theta_0 to (G,) tensor
+        if isinstance(theta_0, Tensor):
+            self.theta_0 = theta_0.to(device=device, dtype=dtype)
+        else:
+            self.theta_0 = torch.full((G,), theta_0, device=device, dtype=dtype)
+
+        # Normalize beta to (G,) tensor
+        if isinstance(beta, Tensor):
+            self.beta = beta.to(device=device, dtype=dtype)
+        else:
+            self.beta = torch.full((G,), beta, device=device, dtype=dtype)
+
+    def compute_threshold(self) -> Tensor:
+        """Compute adaptive threshold per group.
+
+        Returns:
+            threshold: (G,) — per-group thresholds
+        """
+        return self.theta_0  # Stage 15: add entropy term per group
+
+    def forward(self, eps_norm: Tensor) -> Tensor:
+        """Compute per-channel surprise gate.
+
+        Spec §8:
+            s_t^(i) = σ(β_i · (|ε_t^(i)|_norm - θ_i))
+
+        Args:
+            eps_norm: (batch, seq_len, G) — normalized per-group error
+
+        Returns:
+            s_t: (batch, seq_len, G) — per-channel surprise values in [0, 1]
+        """
+        threshold = self.compute_threshold()  # (G,)
+        # Broadcast: beta (G,) * (eps_norm (B,S,G) - threshold (G,))
+        return torch.sigmoid(self.beta * (eps_norm - threshold))

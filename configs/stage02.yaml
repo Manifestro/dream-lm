@@ -40,3 +40,4 @@ ema:
 gate:
   theta_0: 0.0       # base threshold (centered on EMA mean)
   beta: 5.0          # gate temperature (higher = sharper transition)
+  G: 0               # channel groups (0 = scalar gate, 8 = vectorized Stage 8)

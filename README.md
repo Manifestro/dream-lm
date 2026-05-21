@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-7%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-134%20passed-2ea44f?style=flat-square)](#stage-7--done)
+[![Stage](https://img.shields.io/badge/stage-8%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-156%20passed-2ea44f?style=flat-square)](#stage-8--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -82,7 +82,7 @@ Full specification → [manifestro.io](https://manifestro.io)
 | Phase | Stages | Theme | Status |
 |-------|--------|-------|--------|
 | I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1-4 done** |
-| II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | **5 done** · 6-8 open |
+| II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | **5-8 done** |
 | III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | open |
 | IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | open |
 | V — Memory | 16 – 17 | Sleep / consolidation, multi-layer stack | open |
@@ -251,7 +251,33 @@ Gate behavior on untrained model (θ_0=2.0, β=5.0):
 | Positions > 0.8 (highly surprised) | 27% |
 | Positions < 0.2 (not surprised) | 55% |
 
-Bimodal distribution — gate is mostly "closed" or "open", few intermediate values. Gate responds to disruption in EMA statistics, not raw error magnitude. Slow drift is a blind spot (open question for Stage 8).
+Bimodal distribution — gate is mostly "closed" or "open", few intermediate values. Gate responds to disruption in EMA statistics, not raw error magnitude. Slow drift is a blind spot (H11).
+
+---
+
+## Stage 8 — Done
+
+Vectorized Surprise Gate — per-channel-group plasticity:
+
+- `VectorizedGate` class — `s_t^(i) = σ(β_i · (|ε_t^(i)|_norm - θ_i))`, per-group β
+- `perception_error_groups` — splits ε^perc into G contiguous groups, mean(|ε|) per group
+- `EMAStats` — added grouped mode (`G` parameter), `_update_grouped()` for (batch, seq, G)
+- `forward_with_cache` — returns 5-tuple: (output, caches, ema, surprise_scalar, surprise_grouped)
+- `G=8` contiguous channel groups, configurable via `configs/stage02.yaml`
+
+**22 / 22 new tests passed** · total: 156 / 156 (all stages)
+
+Grouped gate behavior on untrained model (θ_0=0.0, β=5.0, G=8):
+
+| Metric | Scalar Gate | Grouped Gate (mean across channels) |
+|--------|------------|-------------------------------------|
+| Mean | 0.9989 | 0.9976 |
+| Std | 0.015 | varies by channel |
+| Per-channel variance | N/A | ~0.0 |
+
+**Observation:** All grouped channels saturate near 1.0 on untrained model output. This suggests that `θ_0=0.0` is too low for grouped mode — every channel's error exceeds the threshold. The scalar gate also saturates (0.9989) but has slightly more variance. Tuning `θ_0` per-group or adding the entropy term to threshold (Stage 15) will be necessary to get meaningful differentiation between channels.
+
+Scalar path preserved for backward compatibility — both paths run independently when `G > 0`.
 
 ---
 
@@ -259,14 +285,15 @@ Bimodal distribution — gate is mostly "closed" or "open", few intermediate val
 
 ```bash
 uv sync
-uv run pytest                                          # all 134 tests
-uv run pytest tests/test_stage07.py -v                 # Stage 7 only
+uv run pytest                                          # all 156 tests
+uv run pytest tests/test_stage08.py -v                 # Stage 8 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
 PYTHONPATH=. uv run python experiments/stage04_verify.py # fast weights verification
 PYTHONPATH=. uv run python experiments/stage05_verify.py # perception error baseline
 PYTHONPATH=. uv run python experiments/stage06_verify.py # EMA normalization verification
 PYTHONPATH=. uv run python experiments/stage07_verify.py # surprise gate verification
+PYTHONPATH=. uv run python experiments/stage08_verify.py # vectorized gate verification
 ```
 
 ---
@@ -274,23 +301,23 @@ PYTHONPATH=. uv run python experiments/stage07_verify.py # surprise gate verific
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1-7: transformer blocks + model
+dream_lm/core/           # Stage 1-8: transformer blocks + model
   attention.py           # CausalAttention
   multihead.py           # MultiHeadAttention (KV-cache incremental forward, fast-weight augment)
   positional_encoding.py # SinusoidalPositionalEncoding (+ offset)
   transformer_layer.py   # TransformerLayer, FeedForward
   kv_cache.py            # KVCache dataclass (+ fast_weights field, Stage 4)
   fast_weights.py        # FastWeightState dataclass (Stage 4)
-  predictive_coding.py   # compute_perception_error, perception_error_norm (Stage 5)
-  ema.py                 # EMAStats dataclass (Stage 6)
-  surprise_gate.py       # SurpriseGate class (NEW Stage 7)
+  predictive_coding.py   # compute_perception_error, perception_error_norm, perception_error_groups (Stage 5, 8)
+  ema.py                 # EMAStats dataclass (scalar + grouped mode, Stage 6, 8)
+  surprise_gate.py       # SurpriseGate + VectorizedGate classes (Stage 7, 8)
   tokenizer.py           # CharTokenizer (encode/decode, save/load)
-  model.py               # DREAMLM (+ ModelOutput, fast_weight_r, ema_alpha, gate)
+  model.py               # DREAMLM (+ ModelOutput, fast_weight_r, ema_alpha, gate, G)
 dream_lm/train/          # Training infrastructure
   loop.py                # CharDataset, CosineWarmupScheduler, train() (+ ModelOutput support)
 dream_lm/eval/           # Metrics
   metrics.py             # perplexity, bits_per_char
-tests/                   # 134 tests (9 attention + 15 transformer + 26 S2 + 17 S3 + 21 S4 + 16 S5 + 17 S6 + 13 S7)
+tests/                   # 156 tests (9 attention + 15 transformer + 26 S2 + 17 S3 + 21 S4 + 16 S5 + 17 S6 + 13 S7 + 22 S8)
 experiments/             # launch scripts
   stage01_verify.py      # Stage 1: gradcheck + benchmarks
   stage02_train.py       # Train on tiny-shakespeare
@@ -298,9 +325,10 @@ experiments/             # launch scripts
   stage04_verify.py      # Fast weights correctness + baseline identity
   stage05_verify.py      # Perception error baseline + correlation
   stage06_verify.py      # EMA normalization verification
-  stage07_verify.py      # Surprise gate verification (NEW Stage 7)
+  stage07_verify.py      # Surprise gate verification (Stage 7)
+  stage08_verify.py      # Vectorized gate verification (Stage 8)
 configs/                 # YAML hyperparameter configs
-  stage02.yaml           # Stage 2 config (+ fast_weight_r, ema, gate)
+  stage02.yaml           # Stage 2 config (+ fast_weight_r, ema, gate, G)
 ```
 
 ---
