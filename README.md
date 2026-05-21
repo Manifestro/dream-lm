@@ -28,50 +28,47 @@ On top of plasticity, the model maintains a **Goal Block**: a latent intention v
 
 ## Architecture
 
-Seven blocks, built and verified one at a time:
+Seven blocks. The complete forward pass per token, in order:
 
-```
-Token xₜ
-  │
-  ▼
-[1] Embedding + Sinusoidal PE
-  │   eₜ = E · one_hot(xₜ) + PEₜ
-  │
-  ▼
-[2] Attention with Fast Weights                        ┐
-  │   Qₜ = W_Q · eₜ                                  │  Blocks 1–3 are
-  │   Kₜ = W_K · h̃ₜ₋₁  +  U_K · V_basis ᵀ           │  the core loop.
-  │   Vₜ = W_V · h̃ₜ₋₁  +  U_V · V_basis ᵀ           │  Everything else
-  │   hₜ = softmax(QₜKᵀ / √dₖ + M_causal) · Vₜ      │  plugs into it.
-  │                                                   ┘
-  ▼
-[3] Goal Block
-  │   gₜ = (1 − sₜ₋₁)·detach(gₜ₋₁) + sₜ₋₁·MLP_goal(hₜ, εₜ₋₁)
-  │   hₜ'= LayerNorm(hₜ + W_goal · gₜ)
-  │
-  ▼
-[4] Prediction  →  ŷₜ = softmax(W_vocab · hₜ')
-  │
-  ▼
-[5] Dual Error Signals
-  │   εₜᵖᵉʳᶜ = hₜ' − W_vocab ᵀ · ŷₜ       (perception: did I understand?)
-  │   εₜᵉˣᵖʳ = gₜ  − W_proj  · hₜ'        (expression: did I say what I meant?)
-  │
-  ▼
-[6] Vectorized Surprise Gate   sₜ⁽ⁱ⁾ = σ(βᵢ · (|εₜ⁽ⁱ⁾| − θₜ⁽ⁱ⁾))   G=8 groups
-  │
-  ├──▶ [7] STDP Update  (no gradient descent)
-  │         ΔU_K = η · (sₜ ⊙ εₜᵖᵉʳᶜ) · hₜᵀ · V_basis
-  │         ΔU_V = η · (sₜ ⊙ εₜᵖᵉʳᶜ) · eₜᵀ · V_basis
-  │         U ← clip(λ·U + ΔU,  κ)
-  │
-  └──▶ [8] LTC Time Constant
-            τₜ  = τ_max − (τ_max − τ_min) · sₜ
-            h̃ₜ  = (1 − 1/τₜ) · h̃ₜ₋₁  +  (1/τₜ) · hₜ'   ──▶ fed back to Block 2
+```python
+# --- input ---
+e = embed(x) + sinusoidal_pe(pos)
 
-  [9] Sleep  (triggered when mean surprise over window > ξ)
-            W_K^slow += ρ · G_K ⊙ (U_K · V_basis ᵀ)
-            U_K, U_V ← 0
+# --- attention with fast weights ---
+# K and V are augmented at inference time; U_K, U_V are updated by STDP, not SGD
+Q = W_Q @ e
+K = W_K @ h_prev  +  U_K @ V_basis.T
+V = W_V @ h_prev  +  U_V @ V_basis.T
+h = causal_attention(Q, K, V)
+
+# --- goal block ---
+# g tracks latent intention; s gates how much it updates on this token
+g = (1 - s_prev) * detach(g_prev)  +  s_prev * MLP_goal(h, eps_prev)
+h = LayerNorm(h + W_goal @ g)
+
+# --- prediction ---
+y = softmax(W_vocab @ h)
+
+# --- dual error: what I missed vs. what I failed to express ---
+eps_perc = h - W_vocab.T @ y
+eps_expr = g - W_proj @ h
+eps      = eps_perc + W_down @ eps_expr
+
+# --- vectorized surprise gate (G=8 channel groups, learnable temperatures) ---
+s = sigmoid(beta[group] * (abs(eps) - theta))   # per-channel, shape (d,)
+
+# --- STDP weight update — no backward pass ---
+U_K = clip(decay * U_K  +  lr * outer(s * eps_perc, h_prev @ V_basis),  max_norm)
+U_V = clip(decay * U_V  +  lr * outer(s * eps_perc, e     @ V_basis),  max_norm)
+
+# --- LTC: inertia scales inversely with surprise ---
+tau    = tau_max - (tau_max - tau_min) * s.mean()
+h_prev = (1 - 1/tau) * h_prev  +  (1/tau) * h
+
+# --- sleep: consolidate fast weights into slow weights, then reset ---
+if running_mean(s) > threshold:
+    W_K += rho * attention_gate(U_K) * (U_K @ V_basis.T)
+    U_K, U_V = zeros, zeros
 ```
 
 **Loss:** $\mathcal{L} = \mathcal{L}_{\text{LM}} + \alpha\,\mathcal{L}_{\text{goal}} + \beta\,\mathcal{L}_{\text{surprise}} + \lambda_\beta\|\boldsymbol{\beta}\|_2^2$
@@ -84,12 +81,12 @@ Full specification → [manifestro.io](https://manifestro.io)
 
 | Phase | Stages | Theme | Status |
 |-------|--------|-------|--------|
-| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1 ✅** · 2–4 ⬜ |
-| II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | ⬜ |
-| III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | ⬜ |
-| IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | ⬜ |
-| V — Memory | 16 – 17 | Sleep / consolidation, multi-layer stack | ⬜ |
-| VI — Scale | 18 – 20 | Language benchmarks, product hypothesis, preprint | ⬜ |
+| I — Core | 1 – 4 | Transformer, autoregressive LM, KV-cache, low-rank fast weights | **1 done** · 2–4 open |
+| II — Predictive Coding | 5 – 8 | Perception error, EMA statistics, surprise gate (scalar → vector) | open |
+| III — Plasticity | 9 – 12 | STDP, homeostasis, LTC time constant, integration test | open |
+| IV — Intentionality | 13 – 15 | Goal block, expression error, joint loss | open |
+| V — Memory | 16 – 17 | Sleep / consolidation, multi-layer stack | open |
+| VI — Scale | 18 – 20 | Language benchmarks, product hypothesis, preprint | open |
 
 ---
 
