@@ -6,8 +6,8 @@
 
 *A transformer that rewrites its own weights as it reads.*
 
-[![Stage](https://img.shields.io/badge/stage-5%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-120%20passed-2ea44f?style=flat-square)](#stage-5--done)
+[![Stage](https://img.shields.io/badge/stage-6%20%2F%2020-4f86f7?style=flat-square)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-121%20passed-2ea44f?style=flat-square)](#stage-6--done)
 [![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](LICENSE)
 [![Website](https://img.shields.io/badge/manifestro.io-000000?style=flat-square&logo=data:image/svg+xml;base64,)](https://manifestro.io)
@@ -209,16 +209,39 @@ Baseline measurements on untrained model (random input, d_model=128):
 
 ---
 
+## Stage 6 — Done
+
+EMA statistics — normalize perception error relative to running background:
+
+- `EMAStats` dataclass — stateful running mean/variance, per-batch-element, autoregressive update
+- `forward_with_cache` — accepts `ema_stats`, computes ε^perc → ‖ε^perc‖ → normalized, returns updated state
+- `generate()` — creates EMAStats alongside KVCache, carries through entire generation loop
+- Configurable `ema_alpha` (0.9 = fast, 0.99 = default, 0.999 = slow)
+
+**17 / 17 new tests passed** · total: 121 / 121 (all stages)
+
+Normalized signal on untrained model (raw ‖ε^perc‖ was nearly constant):
+
+| Metric | Raw ‖ε^perc‖ | Normalized ‖ε^perc‖_norm |
+|--------|-------------|------------------------|
+| Mean | 11.3087 | 2.1537 |
+| Std | 0.0014 | 1.5394 |
+
+**1000× more variance** after normalization — EMA amplifies micro-fluctuations invisible in the raw signal. Constant input converges to ≈ 0, sudden changes produce sharp peaks (> 6σ). First-position artifact (normalized = 10.0) handled by Stage 7.
+
+---
+
 ## Quick Start
 
 ```bash
 uv sync
-uv run pytest                                          # all 120 tests
-uv run pytest tests/test_stage05.py -v                 # Stage 5 only
+uv run pytest                                          # all 121 tests
+uv run pytest tests/test_stage06.py -v                 # Stage 6 only
 PYTHONPATH=. uv run python experiments/stage02_train.py  # train on tiny-shakespeare
 PYTHONPATH=. uv run python experiments/stage03_verify.py # KV-cache verification
 PYTHONPATH=. uv run python experiments/stage04_verify.py # fast weights verification
 PYTHONPATH=. uv run python experiments/stage05_verify.py # perception error baseline
+PYTHONPATH=. uv run python experiments/stage06_verify.py # EMA normalization verification
 ```
 
 ---
@@ -226,29 +249,31 @@ PYTHONPATH=. uv run python experiments/stage05_verify.py # perception error base
 ## Structure
 
 ```
-dream_lm/core/           # Stage 1-5: transformer blocks + model
+dream_lm/core/           # Stage 1-6: transformer blocks + model
   attention.py           # CausalAttention
   multihead.py           # MultiHeadAttention (KV-cache incremental forward, fast-weight augment)
   positional_encoding.py # SinusoidalPositionalEncoding (+ offset)
   transformer_layer.py   # TransformerLayer, FeedForward
   kv_cache.py            # KVCache dataclass (+ fast_weights field, Stage 4)
   fast_weights.py        # FastWeightState dataclass (Stage 4)
-  predictive_coding.py   # compute_perception_error, perception_error_norm (NEW Stage 5)
+  predictive_coding.py   # compute_perception_error, perception_error_norm (Stage 5)
+  ema.py                 # EMAStats dataclass (NEW Stage 6)
   tokenizer.py           # CharTokenizer (encode/decode, save/load)
-  model.py               # DREAMLM (+ ModelOutput, fast_weight_r)
+  model.py               # DREAMLM (+ ModelOutput, fast_weight_r, ema_alpha)
 dream_lm/train/          # Training infrastructure
   loop.py                # CharDataset, CosineWarmupScheduler, train() (+ ModelOutput support)
 dream_lm/eval/           # Metrics
   metrics.py             # perplexity, bits_per_char
-tests/                   # 120 tests (24 Stage 1 + 26 Stage 2 + 17 Stage 3 + 21 Stage 4 + 16 Stage 5)
+tests/                   # 121 tests (24 Stage 1 + 26 Stage 2 + 17 Stage 3 + 21 Stage 4 + 16 Stage 5 + 17 Stage 6)
 experiments/             # launch scripts
   stage01_verify.py      # Stage 1: gradcheck + benchmarks
   stage02_train.py       # Train on tiny-shakespeare
   stage03_verify.py      # KV-cache correctness + benchmark
   stage04_verify.py      # Fast weights correctness + baseline identity
-  stage05_verify.py      # Perception error baseline + correlation (NEW Stage 5)
+  stage05_verify.py      # Perception error baseline + correlation
+  stage06_verify.py      # EMA normalization verification (NEW Stage 6)
 configs/                 # YAML hyperparameter configs
-  stage02.yaml           # Stage 2 config (+ fast_weight_r)
+  stage02.yaml           # Stage 2 config (+ fast_weight_r, ema)
 ```
 
 ---

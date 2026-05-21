@@ -1,0 +1,82 @@
+{
+  "constant_convergence": {
+    "constant_value": 5.0,
+    "seq_len": 200,
+    "first_10_mean_abs": 4.9772,
+    "last_10_mean_abs": 0.4059,
+    "converging": true,
+    "final_mu": 4.3301,
+    "final_var": 2.8717
+  },
+  "sudden_change_peak": {
+    "baseline_norm_mean": 2.7171,
+    "peak_at_50": 6.8569,
+    "peak_at_51": 5.6358,
+    "peak_at_54": 3.992,
+    "peak_significant": true,
+    "normalized_profile_first_5": [
+      10.0,
+      7.0533,
+      5.7445,
+      4.9623,
+      4.4272
+    ],
+    "normalized_profile_at_spike": [
+      1.2599,
+      1.2438,
+      6.8569,
+      5.6358,
+      4.891,
+      4.3759,
+      3.992,
+      0.3438,
+      0.3419
+    ]
+  },
+  "no_division_by_zero": {
+    "alpha": 0.999,
+    "has_nan": false,
+    "has_inf": false,
+    "min_normalized": 3.084289,
+    "max_normalized": 31.62277,
+    "stable": true
+  },
+  "alpha_smoothing": {
+    "alpha_0.9": {
+      "response_at_step": 3.1619,
+      "recovery_20_steps_after": 0.3695
+    },
+    "alpha_0.99": {
+      "response_at_step": 2.7282,
+      "recovery_20_steps_after": 1.6123
+    },
+    "alpha_0.999": {
+      "response_at_step": 6.3574,
+      "recovery_20_steps_after": 4.6915
+    }
+  },
+  "real_perception_error": {
+    "model": "d_model=128, n_layers=4",
+    "seq_len": 64,
+    "raw_eps_norm_mean": 11.3087,
+    "raw_eps_norm_std": 0.0014,
+    "normalized_mean": 2.1537,
+    "normalized_std": 1.5394,
+    "normalized_first_5": [
+      10.0,
+      7.0534,
+      5.7445,
+      4.9622,
+      4.427
+    ],
+    "normalized_last_5": [
+      1.1047,
+      1.0926,
+      1.0807,
+      1.0692,
+      1.0579
+    ],
+    "final_ema_mu": 5.3648,
+    "final_ema_var": 31.568
+  }
+}

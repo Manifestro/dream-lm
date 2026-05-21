@@ -22,6 +22,8 @@ from dream_lm.core.fast_weights import FastWeightState
 from dream_lm.core.kv_cache import KVCache
 from dream_lm.core.positional_encoding import SinusoidalPositionalEncoding
 from dream_lm.core.transformer_layer import TransformerLayer
+from dream_lm.core.ema import EMAStats
+from dream_lm.core.predictive_coding import compute_perception_error, perception_error_norm
 
 
 @dataclass
@@ -62,11 +64,13 @@ class DREAMLM(nn.Module):
         activation: str = "gelu",
         tie_embeddings: bool = True,
         fast_weight_r: int = 0,
+        ema_alpha: float = 0.99,
     ) -> None:
         super().__init__()
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.fast_weight_r = fast_weight_r
+        self.ema_alpha = ema_alpha
 
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pe = SinusoidalPositionalEncoding(d_model, max_seq_len)
@@ -131,20 +135,26 @@ class DREAMLM(nn.Module):
         return ModelOutput(logits=logits, h_final=h)
 
     def forward_with_cache(
-        self, x: Tensor, kv_caches: list[KVCache | None]
-    ) -> tuple[ModelOutput, list[KVCache | None]]:
+        self,
+        x: Tensor,
+        kv_caches: list[KVCache | None],
+        ema_stats: EMAStats | None = None,
+    ) -> tuple[ModelOutput, list[KVCache | None], EMAStats | None]:
         """Forward pass with KV-Cache for incremental inference.
 
         Processes a single token (or short sequence) through the model,
         updating the provided KV-Caches for each layer.
+        Optionally updates EMA statistics for perception error normalization.
 
         Args:
             x: (batch, seq_len, d_model) — embedded input (already has PE applied)
             kv_caches: list of KVCache (one per layer), or None for each layer
+            ema_stats: optional EMAStats for perception error normalization
 
         Returns:
             ModelOutput with logits and h_final
             updated_caches: list of updated KVCache objects (same objects, mutated in-place)
+            updated_ema: EMAStats if provided, None otherwise
         """
         caches_out: list[KVCache | None] = []
 
@@ -161,7 +171,16 @@ class DREAMLM(nn.Module):
         h = self.ln_f(h)
         logits = self.w_vocab(h)
 
-        return ModelOutput(logits=logits, h_final=h), caches_out
+        output = ModelOutput(logits=logits, h_final=h)
+
+        # EMA update (inference-time only, no gradient flow through EMA state)
+        updated_ema = ema_stats
+        if ema_stats is not None:
+            eps_perc = compute_perception_error(logits, h, self.w_vocab.weight)
+            eps_norm = perception_error_norm(eps_perc)  # (batch, seq_len)
+            ema_stats.update(eps_norm)
+
+        return output, caches_out, updated_ema
 
     @torch.no_grad()
     def generate(
@@ -224,7 +243,10 @@ class DREAMLM(nn.Module):
 
         # Run through transformer stack with cache to populate it.
         # The last position's logits give us the prediction for the next token.
-        output, kv_caches = self.forward_with_cache(h, kv_caches)
+        ema_stats = EMAStats.init(
+            batch=1, alpha=self.ema_alpha, device=device, dtype=h.dtype
+        )
+        output, kv_caches, ema_stats = self.forward_with_cache(h, kv_caches, ema_stats)
         logits = output.logits[0, -1, :]  # (vocab_size,)
 
         # Track actual token position — needed when FIFO truncation is active
@@ -257,7 +279,7 @@ class DREAMLM(nn.Module):
                 h_next = self.pe(h_next, offset=pos)
                 pos += 1
 
-                logits, kv_caches = self.forward_with_cache(h_next, kv_caches)
+                logits, kv_caches, ema_stats = self.forward_with_cache(h_next, kv_caches, ema_stats)
                 logits = logits.logits[0, 0, :]  # (vocab_size,)
 
         return tokens
